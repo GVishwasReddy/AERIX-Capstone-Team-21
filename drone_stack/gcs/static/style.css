@@ -1136,7 +1136,7 @@ body.radar-expanded #radar { max-width:min(80vh,80vw); }
 /* Badge sits inside .cams (see index.html), matched to the tile's width so the
    overlay reads as one stack. Only existing theme tokens are used - every one
    of them is declared in BOTH the dark and light blocks, which is the rule a
-   new derived token would have had to follow too (CLAUDE.md §5). */
+   new derived token would have had to follow too (docs/PROJECT_NOTES.md §5). */
 .cam-rec {
   display:flex; align-items:center; gap:var(--sp-2);
   width:var(--cam-w);                      /* == .cam / .cam-servo width */

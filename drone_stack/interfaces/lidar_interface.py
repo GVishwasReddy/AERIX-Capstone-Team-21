@@ -56,7 +56,7 @@ DEFAULT_FOV_DEG = 250.0
 #: flickering bins. ⚠️ Raising it further is NOT safer, and the table shows why
 #: - past the knee the gate starts destroying returns off real surfaces, those
 #: bins stop being solid, and the flicker-bin count climbs back to where it
-#: started. Same shape as the VFH safety radius in CLAUDE.md 12c: bigger blocks
+#: started. Same shape as the VFH safety radius in docs/PROJECT_NOTES.md 12c: bigger blocks
 #: more of the picture without buying margin.
 #:
 #: This gate halves the noise but does not remove it - 11 flickering bins

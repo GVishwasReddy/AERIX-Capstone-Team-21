@@ -128,7 +128,7 @@ class GcsHub:
         # Payload servo envelope. Read once here so the clamp below, the UI
         # buttons and the tuning slider all come from the same numbers - they
         # used to be duplicated as constants in app.js and drifted out of step
-        # with config/*.yaml and CLAUDE.md, which disagreed three ways.
+        # with config/*.yaml and docs/PROJECT_NOTES.md, which disagreed three ways.
         _pl = config.section("payload") or {}
         _min = int(_pl.get("min_us", 500))
         _max = int(_pl.get("max_us", 2500))
@@ -984,7 +984,7 @@ class GcsHub:
         """Bridge for drone_ble_peripheral.py's ``drop_characteristic``: once
         its own security gates (HMAC mutual auth, micro-geofence, DROP HMAC)
         all pass for the order being flown, it POSTs here so the CORE flight
-        profile (CLAUDE.md §11 - not the optional novelty layer) can react.
+        profile (docs/PROJECT_NOTES.md §11 - not the optional novelty layer) can react.
 
         Published on ``Topics.DELIVERY_BLE_RESULT`` unconditionally (unlike
         ``_on_ble_auth_event``'s lazy novelty-only bridge above), because

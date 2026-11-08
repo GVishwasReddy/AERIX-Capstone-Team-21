@@ -19,7 +19,7 @@ outputting, so it is wiring, power or the servo".
 
 Channel is an argument (added 2026-09-05, when a second servo went on AUX2).
 AUX1 == SERVO9 (payload MG995), AUX2 == SERVO10 (MG90S). Defaults to 9, so the
-invocation recorded in CLAUDE.md keeps working unchanged.
+invocation recorded in docs/PROJECT_NOTES.md keeps working unchanged.
 
 Run with the GCS stopped - it owns /dev/ttyACM0:
     sudo systemctl stop aerix-gcs.service

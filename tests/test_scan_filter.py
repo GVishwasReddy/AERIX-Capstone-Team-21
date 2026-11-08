@@ -16,7 +16,7 @@ So the tests below pin *persistence* behaviour, not smoothing behaviour.
 ``test_a_pole_drifting_under_a_turning_airframe_is_not_erased``. Every other
 test here is about throwing noise away; that one is about NOT throwing away a
 real obstacle, and it is the failure a static bench can never show you. Per
-CLAUDE.md 8, each of these was falsified against the unfiltered code before
+docs/PROJECT_NOTES.md 8, each of these was falsified against the unfiltered code before
 being trusted.
 """
 from __future__ import annotations
@@ -226,12 +226,12 @@ def test_describe_reports_what_it_rejected():
 
 
 def test_every_shipped_profile_rejects_noise():
-    """CLAUDE.md 5: config is the source of truth - and every profile must agree.
+    """docs/PROJECT_NOTES.md 5: config is the source of truth - and every profile must agree.
 
     real.yaml is what the aircraft flies; default.yaml is what a bare
     Config.load() in a test or a script gets. A profile that silently shipped
     the filter disabled would put raw scans back under NavigationNode, which
-    since CLAUDE.md 12 is the thing that actually steers. Same shape as
+    since docs/PROJECT_NOTES.md 12 is the thing that actually steers. Same shape as
     test_every_shipped_profile_satisfies_the_clearance_invariant in
     test_smooth_avoidance.py, and for the same reason: the invariant must not
     be breakable by editing YAML.

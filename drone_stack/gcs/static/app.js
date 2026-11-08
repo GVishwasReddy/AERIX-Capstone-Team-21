@@ -1889,7 +1889,7 @@ function wire() {
   // here comes from the `payload` block the hub sends in each frame -
   // config/default.yaml is the single source of truth. These used to be
   // hardcoded constants and drifted out of step with the YAML and with
-  // CLAUDE.md, which by August disagreed three different ways.
+  // docs/PROJECT_NOTES.md, which by August disagreed three different ways.
   //
   // srvCfg is a fallback only, for the moment before the first frame arrives.
   let srvCfg = { channel: 12, lock_us: 1100, release_us: 1410,
@@ -1943,7 +1943,7 @@ function wire() {
   // by accident.
   //
   // Both angles and the channel come from the hub's aux2_servo block. Never
-  // hardcode them here: that is exactly the three-way drift CLAUDE.md §6
+  // hardcode them here: that is exactly the three-way drift docs/PROJECT_NOTES.md §6
   // documents. The values below are a fallback for the moment before the
   // first frame arrives.
   let aux2Cfg = { channel: 14, min_us: 500, max_us: 2500, deg_span: 180,

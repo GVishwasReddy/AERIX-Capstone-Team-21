@@ -18,7 +18,7 @@ Only a comparison against the STACK's own rotation helper catches it, which is
 what these tests do - they assert against ``body_to_enu``, not against numbers
 copied out of the simulator.
 
-This is the same shape as the POSHOLD hover in CLAUDE.md 11: a simulator that
+This is the same shape as the POSHOLD hover in docs/PROJECT_NOTES.md 11: a simulator that
 agrees with itself and not with the aircraft. It is worth a dedicated file.
 """
 from __future__ import annotations

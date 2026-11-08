@@ -3,7 +3,7 @@
 Design, and why it is shaped this way
 -------------------------------------
 **In flight, store only what is cheap.** The Pi 5 has **no hardware video
-encoder** (CLAUDE.md section 6), so nothing H.264 runs while the aircraft is in
+encoder** (docs/PROJECT_NOTES.md section 6), so nothing H.264 runs while the aircraft is in
 the air. Two feeds exist:
 
 * **Full-resolution record stream (default since 2026-09-15).** The camera hands
@@ -1408,7 +1408,7 @@ class FlightRecorder:
 
     def status(self) -> dict:
         """Shipped in every GCS frame, so the UI reads config and live state
-        rather than holding numbers of its own (CLAUDE.md section 5)."""
+        rather than holding numbers of its own (docs/PROJECT_NOTES.md section 5)."""
         with self._lock:
             recording = self._state == "recording"
             elapsed = (self._t_last - self._t0) if recording else 0.0

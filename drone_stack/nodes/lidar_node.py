@@ -54,20 +54,20 @@ class LidarNode(NodeBase):
         # ignored rear wedge from the same numbers the driver masks with.
         self.fov = FovMask(section)
         # Temporal persistence gate. Applied HERE rather than in the driver so
-        # the simulator inherits exactly the same one - CLAUDE.md 11b is the
+        # the simulator inherits exactly the same one - docs/PROJECT_NOTES.md 11b is the
         # standing lesson about a sim that agrees with itself and not with the
         # aircraft - and so that every consumer downstream (PointCloud, the GCS
         # radar, ObstacleNode -> NavigationNode, and ProximityNode -> FC) reads
         # one filtered view instead of each re-deriving its own.
         #
         # Until 2026-09-21 only ProximityNode filtered, and only for itself.
-        # That was defensible while the FC did the avoiding; since CLAUDE.md 12
+        # That was defensible while the FC did the avoiding; since docs/PROJECT_NOTES.md 12
         # the Pi owns the cruise band and the return leg, so the branch feeding
         # NavigationNode was the unfiltered one that actually moves the aircraft.
         self.filter = ScanFilter(section)
         self._scan_count = 0
         self._empty_reads = 0
-        # This node polls faster than the C1 revolves (CLAUDE.md 13c) so a
+        # This node polls faster than the C1 revolves (docs/PROJECT_NOTES.md 13c) so a
         # revolution is picked up the moment it completes, not up to a whole
         # tick later. Most polls therefore find nothing new - that is normal,
         # not a fault. Only a genuine gap longer than ``empty_warn_s`` warns.
@@ -163,7 +163,7 @@ class LidarNode(NodeBase):
             blind_deg=self.fov.blind_deg,
             # Surfaced so a thin picture is explainable at a glance as the
             # filter working, rather than looking like a LiDAR fault - the same
-            # reasoning as the camera's adaptive-bitrate rung in CLAUDE.md 6.
+            # reasoning as the camera's adaptive-bitrate rung in docs/PROJECT_NOTES.md 6.
             filtered_out=self.filter.rejected,
         )
 

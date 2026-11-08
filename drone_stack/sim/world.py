@@ -347,7 +347,7 @@ class SimWorld:
             # None of it showed up in the suite because the simulator is
             # internally consistent: raycast and mock_lidar share the maths
             # frame, so sim obstacles landed where sim yaw said they would.
-            # It is the same shape as the POSHOLD hover in CLAUDE.md 11 - a
+            # It is the same shape as the POSHOLD hover in docs/PROJECT_NOTES.md 11 - a
             # simulator that agrees with itself and not with the aircraft.
             yaw_compass = flip_yaw_frame(s.yaw)
             heading = math.degrees(yaw_compass) % 360.0

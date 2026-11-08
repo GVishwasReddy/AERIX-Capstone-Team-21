@@ -1457,7 +1457,7 @@ class DroneService(Service):
             print(f"[HARDWARE] Servo OPENED (PWM {open_pwm}) -> Parcel Released!")
         else:
             print("  ❌ [HARDWARE ERROR] Failed to send open command.")
-        # DO_SET_SERVO accepted is not proof the pin moved (CLAUDE.md §6c), so
+        # DO_SET_SERVO accepted is not proof the pin moved (docs/PROJECT_NOTES.md §6c), so
         # even "delivery" here means "the FC accepted the release" - the
         # evidence says which channel and pulse, so an auditor can tell.
         ledger_outcome(KIND_DELIVERY if opened else KIND_UNCONFIRMED, order,

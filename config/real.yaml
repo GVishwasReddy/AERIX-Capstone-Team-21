@@ -56,7 +56,7 @@ lidar:
   # (bench, 2026-09-21, 202 revolutions at 10.1 Hz) - see default.yaml for the
   # survival table and drone_stack/interfaces/lidar_interface.py for the
   # reasoning. Values match default.yaml today; they are repeated here because
-  # this is the profile the aircraft actually flies, and CLAUDE.md 11's warning
+  # this is the profile the aircraft actually flies, and docs/PROJECT_NOTES.md 11's warning
   # about default/real drift applies.
   #
   # If the radar looks sparser than you expect, check `filtered_out` in the

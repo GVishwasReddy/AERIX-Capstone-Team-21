@@ -28,7 +28,7 @@ the date and the log path.
 | Person detection at the drop point | **OFFLINE**: 64.4% recall, 57.4% precision, 40 aerial frames | — | Exp. 4: ≥ 90% recall, in flight, by person size |
 | Person scan + precision drop at 1 m (TF02-Pro) | **SIM-TESTED**; deployed but unflown at 26 Sep | `test_person_scan.py`, `test_precision_drop.py` | Tethered, then exp. 5 |
 | Picking the phone holder among 2–3 people | **SIM-TESTED** | `sim_phone_pick.py`: 0.17–1.33% wrong, 42–77% identified (600 trials/row, literature radio values) | Fit the radio model to `logs/rssi`; exp. 6 |
-| LiDAR avoidance around the handover | SIM-TESTED + bench noise A/B (21 Sep) | `test_*avoidance*.py`, CLAUDE.md §13 | Exp. 7 |
+| LiDAR avoidance around the handover | SIM-TESTED + bench noise A/B (21 Sep) | `test_*avoidance*.py`, docs/PROJECT_NOTES.md §13 | Exp. 7 |
 | 5 m ceiling, stand-down on pilot takeover | SIM-TESTED; takeover seen ON HARDWARE (27 Sep) | `test_transmitter_authority.py` | — |
 | Novelty layer (`drone_stack/novelty/`: markerless landing zone, dual-factor auth, motion abort) | **DESIGN**. Off by default, never deployed, every threshold `# GUESSED` | `tests/novelty/` | Fly it and set thresholds from data, **or keep it out of the claims** |
 
@@ -37,7 +37,7 @@ the date and the log path.
 | Mismatch | Resolution |
 |---|---|
 | 19 receipts vs 21 used-token files | **Likely the two torn receipts.** `receipt_ledger.py` documents a 0-byte receipt (19 Sep) and a 299-zero-byte one (21 Sep) whose tokens were already spent: power lost after an unsynced write, before the servo fired. 19 + 2 = 21. **Confirm on the Pi:** `scripts/verify_receipts.py reconcile` should list exactly those two orders as spent-without-receipt. |
-| CLAUDE.md said SMART_RTL at 3 m; config says RTL at 5 m | Config is the truth: `delivery.return_mode: RTL`, `safety.max_altitude_m: 5.0` (operator, 24 Sep). CLAUDE.md corrected 8 Oct. |
+| docs/PROJECT_NOTES.md said SMART_RTL at 3 m; config says RTL at 5 m | Config is the truth: `delivery.return_mode: RTL`, `safety.max_altitude_m: 5.0` (operator, 24 Sep). docs/PROJECT_NOTES.md corrected 8 Oct. |
 | Geofence 5 m vs 12 m | 12 m (`delivery.ble_geofence_m`). 5 m never passed (4 Oct: 5.3–6.7 m with the recipient under the camera). Pinned by `test_the_ble_geofence_has_one_value_everywhere`. |
 | Test count quoted as static | Fresh run, dated, below. |
 

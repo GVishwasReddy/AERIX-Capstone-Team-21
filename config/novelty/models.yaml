@@ -19,7 +19,7 @@
 # class - only the WINNING channel's target is used per pixel).
 #
 # yolov8n: still the CURRENT placeholder weights already on the Pi
-# (models/yolov8n.hef - see CLAUDE.md §10) - the retrained person-detection
+# (models/yolov8n.hef - see docs/PROJECT_NOTES.md §10) - the retrained person-detection
 # model has not arrived yet. Swap hef_path/score_thr here when it does.
 # -----------------------------------------------------------------------------
 
@@ -72,7 +72,7 @@ models:
     hef_path: models/yolov8n.hef
     input_shape: [640, 640, 3]   # standard yolov8n Hailo export input
     # Deliberately NOT the GCS overlay's threshold (gcs/cameras.py
-    # _build_hailo_processors uses 0.40 for the on-screen box only). CLAUDE.md
+    # _build_hailo_processors uses 0.40 for the on-screen box only). docs/PROJECT_NOTES.md
     # §10 is explicit that both person models peak at only ~0.27-0.37
     # confidence on clear test people on the CURRENT weak/placeholder
     # weights - a 0.40 threshold would filter out every real detection and

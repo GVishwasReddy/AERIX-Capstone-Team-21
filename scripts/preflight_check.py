@@ -6,7 +6,7 @@
     scripts/preflight_check.py --config config/sim.yaml
 
 Read-only. It changes nothing on the Pi or the FC; it reports. --fc needs
-/dev/ttyACM0, so stop aerix-gcs first (CLAUDE.md §4).
+/dev/ttyACM0, so stop aerix-gcs first (docs/PROJECT_NOTES.md §4).
 
 Failsafes are deliberately OFF in config/real.yaml for bench work. That is
 the operator's call, and this script does not override it. It makes the
@@ -58,7 +58,7 @@ def check_config(c) -> list[tuple[str, str, str]]:
     mode = str(d.get("hover_mode", "GUIDED")).upper()
     out.append((BLOCK if mode in STICK_MODES else OK, "delivery.hover_mode",
                 f"{mode}" + (" - takes altitude from the throttle stick; this broke the "
-                             "airframe twice (CLAUDE.md §11)" if mode in STICK_MODES else "")))
+                             "airframe twice (docs/PROJECT_NOTES.md §11)" if mode in STICK_MODES else "")))
 
     if d.get("auto_accept"):
         out.append((BLOCK, "delivery.auto_accept",
@@ -74,7 +74,7 @@ def check_config(c) -> list[tuple[str, str, str]]:
             out.append((WARN, f"{blk}.min_us/max_us",
                         f"{b['min_us']}-{b['max_us']} us: full commissioning travel. Full "
                         "travel broke the mechanism on 2026-08-10; narrow it around the "
-                        "measured lock/release points (CLAUDE.md §6)."))
+                        "measured lock/release points (docs/PROJECT_NOTES.md §6)."))
 
     lv = float(s.get("battery_low_voltage", 0))
     if 0 < lv < 18.0:
@@ -107,7 +107,7 @@ def check_fc(params: dict, channels: list[int]) -> list[tuple[str, str, str]]:
             out.append((level, name, f"{v:g} - {bad_msg}"))
 
     need("ARMING_CHECK", lambda v: int(v) == 1, BLOCK,
-         "pre-arm checks are not all enabled (CLAUDE.md §7)")
+         "pre-arm checks are not all enabled (docs/PROJECT_NOTES.md §7)")
     need("FS_THR_ENABLE", lambda v: int(v) != 0, BLOCK, "RC-loss failsafe disabled")
     need("FS_GCS_ENABLE", lambda v: int(v) != 0, BLOCK,
          "GCS-loss failsafe disabled - a Pi/link death mid-flight is unrecoverable")
@@ -123,7 +123,7 @@ def check_fc(params: dict, channels: list[int]) -> list[tuple[str, str, str]]:
         out.append((WARN, "FLTMODE1-6",
                     f"{', '.join(stick)} = STABILIZE/ACRO: throttle stick drives the motors "
                     "directly - a grab mid-delivery with the stick low is a free fall "
-                    "(CLAUDE.md §11, outstanding)"))
+                    "(docs/PROJECT_NOTES.md §11, outstanding)"))
     for ch in channels:
         lo, hi = p(f"SERVO{ch}_MIN"), p(f"SERVO{ch}_MAX")
         if lo is not None and hi is not None and lo <= 600 and hi >= 2400:

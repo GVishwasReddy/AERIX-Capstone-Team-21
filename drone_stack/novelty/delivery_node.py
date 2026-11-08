@@ -471,7 +471,7 @@ class DeliveryNode(NodeBase):
     def _send_release(self) -> None:
         # Reuses the existing, already-hardware-verified payload config
         # section (config/default.yaml `payload:`) rather than introducing
-        # a second place the release PWM is defined - see CLAUDE.md §6 on
+        # a second place the release PWM is defined - see docs/PROJECT_NOTES.md §6 on
         # why that value must stay singular (a prior mismatch caused a
         # mechanical failure).
         payload = self.config.section("payload")

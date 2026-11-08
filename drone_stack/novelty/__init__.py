@@ -12,6 +12,6 @@ front-end uses:
 No module in this package imports PX4/ArduPilot parameters, the low-level
 MAVLink interface, or the avoidance/RTL logic directly - see
 ``docs/novelty/*.md`` for the formulas and prior-art notes behind each
-module, and ``CLAUDE.md`` / ``docs/ARCHITECTURE.md`` for how this package
+module, and ``docs/PROJECT_NOTES.md`` / ``docs/ARCHITECTURE.md`` for how this package
 attaches to the rest of the stack.
 """
