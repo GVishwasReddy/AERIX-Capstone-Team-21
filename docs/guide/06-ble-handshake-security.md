@@ -133,7 +133,7 @@ All comparisons use `hmac.compare_digest` (constant time). Byte-exact test vecto
 
 ## 5. End-to-end sequence
 
-The diagram follows one successful delivery with the precision drop enabled (as in `config/real.yaml`). The navigator, not the BLE process, flies the descent and fires the servo.
+The diagram follows one successful delivery with the precision drop enabled (as in `config/real.yaml`). The navigator, not the BLE process, flies the descent and fires the servo. This is the designed flow: the person scan and precision drop are simulation-tested and not yet flown, and the phone-side tag check in the last steps is still an app work item (see sections 14 and 15).
 
 ```mermaid
 sequenceDiagram
@@ -159,8 +159,9 @@ sequenceDiagram
     B->>B: start RSSI sampler on this link
     loop about 1 Hz
         P->>B: write GPS = s + 0x00 + MAC16
+        B->>B: verify MAC
         B->>G: POST ble_phone_fix (lat, lon)
-        B->>B: verify MAC, temporal window, geofence
+        B->>B: temporal window, geofence
         P->>B: read RESULT_SIGNED
         B-->>P: VERIFYING n/5 then GEOFENCE_OK
     end
@@ -187,7 +188,7 @@ sequenceDiagram
     N->>N: climb to 5 m, RTL
 ```
 
-If the precision drop is disabled, or the navigator answers `mode=legacy`, the peripheral falls back to a **direct release**. It posts `ble_delivery_result` so the navigator can end its hold early, then commands the servo through the GCS (`set_servo`, using the channel and pulse widths from the `payload` block of `/api/state`). A real order is never released this way while the aircraft is on the ground (see gate G7 below).
+If the precision drop is disabled, or the navigator answers `mode=legacy`, the peripheral falls back to a **direct release**. It posts `ble_delivery_result` so the navigator can end its hold early, then commands the servo through the GCS (`set_servo`, using the channel and pulse widths from the `payload` block of `/api/state`). A real order is never released this way while the aircraft is on the ground (see gate G8 below).
 
 ## 6. The gates, in order
 
@@ -242,7 +243,7 @@ These are the checks inside `on_drop_write`, in code order:
 
 G7 and G8 run on the `drop-request` worker thread. The handler returns `NOT_READY` at once and the phone keeps polling, so the BLE link never stalls waiting for HTTP.
 
-`handshake_open` is computed by `NavigationNode._handshake_open()` in [navigation_node.py](../../drone_stack/nodes/navigation_node.py). When armed with the person scan enabled, it is true only in the HOVER phase, in the `locked` scan stage, inside the handshake window (`handshake_window_s`, 30.0 s in `config/real.yaml`). It is false while a drop is already running. Perception is covered in [chapter 5](05-perception-and-avoidance.md).
+`handshake_open` is computed by `NavigationNode._handshake_open()` in [navigation_node.py](../../drone_stack/nodes/navigation_node.py). When disarmed (the bench) it is always true. When armed, it is false while a drop is already running; with the person scan enabled, it is true only in the HOVER phase, in the `locked` scan stage, inside the handshake window (`handshake_window_s`, 30.0 s in `config/real.yaml`). An authenticated phone that keeps talking can hold that window open a little longer, never past the scan's hard cap. Perception is covered in [chapter 5](05-perception-and-avoidance.md).
 
 ## 7. Sessions: binding and expiry
 
@@ -343,7 +344,7 @@ What the seal does **not** do: the SoC serial is a binding, not a secret. Anyone
 
 ## 11. The receipt ledger
 
-Two receipts found on the aircraft's SD card were torn by power loss: a 0-byte file (19 Sep) and a 299-zero-byte file (21 Sep). Both were written just before the servo fired, and in both cases the order's token had been spent. The servo inrush had browned out the Pi after an unsynced write. The ledger in [receipt_ledger.py](../../drone_stack/ble_handshake/receipt_ledger.py) was rebuilt so this cannot go silent again.
+Two receipts found on the aircraft's SD card were torn by power loss: a 0-byte file (19 Sep) and a 299-zero-byte file (21 Sep). Both show power lost right after an unsynced write, a moment before the servo fired, and in both cases the order's token had been spent. The likely cause is the servo inrush browning out the Pi. The ledger in [receipt_ledger.py](../../drone_stack/ble_handshake/receipt_ledger.py) was rebuilt so this cannot go silent again.
 
 ### Properties
 
@@ -485,7 +486,7 @@ From [evidence/EVIDENCE_TIERS.md](../../evidence/EVIDENCE_TIERS.md). Nothing her
 | Signed, hash-chained, write-ahead ledger | **Bench-software**; format new on 8 Oct, first flight with it pending |
 | Signed RESULT to the phone | **Bench-software**, drone side only |
 | Formal model | **Machine-checked, bounded** (Verifpal, 2 sessions) |
-| Person scan + precision drop at the release height | **Simulation-tested**; deployed but not yet flown |
+| Person scan + precision drop at the release height | **Simulation-tested**; deployed but unflown as of 26 Sep, so not flight-proven |
 
 ## 16. Running the security tests
 

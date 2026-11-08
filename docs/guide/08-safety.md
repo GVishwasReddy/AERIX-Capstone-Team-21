@@ -573,12 +573,12 @@ on this list.
 |---|---|---|
 | No auto-launch from a database row | `delivery.auto_accept: false` in `real.yaml`; orders already `DISPATCHED` at node start are never auto-accepted | A stale row must not launch an aircraft on boot. Preflight treats `auto_accept: true` as NO-GO |
 | Order target limits | Refused beyond `max_delivery_radius_m`, at null island, or without a GPS fix | Geofence `geofence_radius_m` is 75 m in `default.yaml`; preflight warns if it is not larger than the delivery radius |
-| Home latches once | First 3D fix, on the ground, disarmed | A mid-flight GPS jump cannot relocate home |
-| SMART_RTL falls back to RTL | `_do_rtl` waits 3 s for the mode to take | ArduPilot refuses SMART_RTL silently with an empty path buffer |
+| Home freezes at arming | While disarmed and never flown, home tracks the latest fix that meets the 3D-fix and `min_satellites` gates; it freezes on the first arm | A marginal first fix cannot stick as home, and a mid-flight GPS jump cannot relocate it |
+| SMART_RTL falls back to RTL | `_do_rtl` waits 3 s for the mode to take (only when `delivery.return_mode` is `SMART_RTL`; both shipped configs now use plain `RTL`) | ArduPilot refuses SMART_RTL silently with an empty path buffer |
 | Handshake hold timeout | `delivery.hover_seconds: 20.0` in `real.yaml` | Hovering over a customer longer buys nothing but battery; the timeout path flies the same return as success |
 | 6S battery thresholds | `battery_low_voltage: 21.6`, `battery_critical_voltage: 20.4` in `real.yaml` | Defaults were 4S (14.0 / 13.2 V); preflight warns on a 4S-looking threshold |
 | Confirm dialogs | `arm` and `Release Payload` in the GCS | Never triggered casually |
-| Defaults to SIM | The stack runs real hardware only when launched with `real` | Sim is the safety net |
+| Defaults to SIM | `config/default.yaml` sets `mode: sim`; the stack drives real hardware only with the `config/real.yaml` profile (`mode: real`) | Sim is the safety net |
 
 The BLE handshake's own fail-closed gates (AUTH_FAIL, SIGNATURE_FAIL, GEOFENCE_FAIL,
 NOT_READY, PILOT_OVERRIDE) are covered in
@@ -617,7 +617,7 @@ From [`scripts/preflight_check.py`](../../scripts/preflight_check.py), tested in
 | Blocker (NO-GO) | Warning |
 |---|---|
 | `safety.failsafes_enabled: false` | Servo travel still at full 500..2500 µs (payload and aux), in config or on the FC |
-| `delivery.hover_mode` is a stick-driven mode | Any configured altitude above the ceiling (silently clamped) |
+| `delivery.hover_mode` is POSHOLD, LOITER, ALT_HOLD or STABILIZE | Any configured altitude above the ceiling (silently clamped) |
 | `delivery.auto_accept: true` | 4S-looking battery thresholds on a 6S airframe |
 | FC `ARMING_CHECK` ≠ 1 | No FC-side fence (`FENCE_ENABLE` 0): only the Pi's, gone if the Pi dies |
 | FC `FS_THR_ENABLE` or `FS_GCS_ENABLE` = 0 | `PILOT_SPEED_DN` 0 (the 2.5 m/s rate) or above 150 |

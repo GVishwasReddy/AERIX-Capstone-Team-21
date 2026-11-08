@@ -163,7 +163,9 @@ would strand a perfectly good delivery until the service restarted.
 
 Why the radius check is a *gate, not a fence*: it runs only before the aircraft
 moves. `max_delivery_radius_m` (60 m) must stay below the in-flight
-`safety.geofence_radius_m` (75 m), which is a separate failsafe.
+`safety.geofence_radius_m` (75 m), which is a separate Pi-side failsafe. On the
+real profile that failsafe is currently **off** (`safety.failsafes_enabled:
+false` in [real.yaml](../../config/real.yaml)); see [08-safety.md](08-safety.md).
 
 A rejection is written back to Firestore with `status: CANCELED` and the reason
 in `droneMessage`, so the customer sees why.
@@ -203,7 +205,8 @@ Other operator services registered by the node: `delivery_reject`,
 
 The customer gives a single point; the autopilot wants a route.
 `NavigationNode._expand_delivery_mission` splits the straight line from home to
-the target into legs of `leg_length_m` (25 m), capped at `max_legs` (24):
+the target into equal legs no longer than `leg_length_m` (25 m), capped at
+`max_legs` (24):
 
 ```
 legs = clamp(ceil(distance / leg_length_m), 1, max_legs)
@@ -221,8 +224,8 @@ waypoint, so a single long hop would fly the whole leg before re-evaluating the
 LiDAR obstacle field; and the GCS map draws the waypoint list, so the operator
 sees the intended track before committing to it.
 
-Example: a target 60 m away gives `ceil(60 / 25) = 3` waypoints (25 m, 50 m,
-60 m).
+Example: a target 60 m away gives `ceil(60 / 25) = 3` equal legs, so waypoints
+at 20 m, 40 m and 60 m.
 
 ---
 
@@ -269,7 +272,10 @@ stateDiagram-v2
 Notes:
 
 - A failsafe (`_apply_failsafe`) sends battery-critical to **LAND**, an altitude
-  hardlock to **HOLD** with a BRAKE, and anything else to **RTL**.
+  hardlock to **HOLD** with a BRAKE, and anything else to **RTL**. Battery-critical
+  and the altitude hardlock are always checked; the other Pi-side failsafes
+  (low battery, link loss, geofence) are gated by `safety.failsafes_enabled`,
+  which is `false` on the real profile.
 - The Pi-flown return re-uses the NAVIGATE machinery with home appended as an
   ordinary waypoint; running out of waypoints re-enters `_enter_rtl`, which then
   hands the descent and landing to the flight controller.
@@ -393,7 +399,7 @@ every `scan_orbit_step_s` (3.0 s), starting dead ahead so the first leg needs no
 turn. The point being: the recipient may be standing just outside the camera's
 footprint.
 
-Details that came from flight testing:
+Details added after operator review (2026-09-24):
 
 - **Pause on a person** (`scan_pause_on_person: true`): if someone appears with
   a detection score of at least `scan_pause_conf` (0.30), the orbit stops
@@ -603,7 +609,9 @@ fail:
 | No clear spot beside the recipient | "no clear spot beside the recipient" |
 
 The drop target is chosen by `_drop_pick_target`: a point `drop_offset_m`
-(1.8 m) from the locked recipient, on the side away from them. If the aircraft is
+(1.8 m) from the locked recipient, on the aircraft's side of them (or where the
+aircraft already is, if it is within `drop_offset_tol_m`, 0.3 m, of that
+distance). If the aircraft is
 directly overhead it steps sideways toward the clearer side, **never
 backwards** into the rear arc the LiDAR cannot see. If the offset point is next
 to an obstacle it descends where it is, or refuses if that would be closer than
@@ -702,9 +710,9 @@ flowchart TD
   face the way home before moving, letting the LiDAR see the route.
 - **Why a Pi-flown return?** The flight controller's own obstacle avoidance
   (BendyRuler) has never run on this airframe, while the Pi's steerer is the
-  same measured code that flew the outbound legs. It is offered **only** on the
-  job-finished paths. A low-battery or geofence failsafe, and any
-  operator-pressed RTL, still go straight to the flight controller with no
+  same code that flies the outbound legs. It is offered **only** on the
+  job-finished paths. A failsafe RTL (when `failsafes_enabled` is on) and any
+  operator-pressed RTL still go straight to the flight controller with no
   delay, and the Pi's ownership of the return is budgeted
   (`avoidance_rtl_pi_budget_s`, 240 s real).
 - `return_mode: RTL` (direct). If SMART_RTL were configured and the FC refused
@@ -744,8 +752,8 @@ still aboard: the aircraft's story was fine, the order's was not. So
 | UNKNOWN | armed, but nothing left to judge it by |
 
 The pair becomes one headline from a shared table in
-[messages.py](../../drone_stack/msg/messages.py), so the node, Firestore and the
-OLED panel cannot describe the same flight three different ways:
+[messages.py](../../drone_stack/msg/messages.py), so the node, the Firestore
+write-back and the GCS panel cannot describe the same flight three different ways:
 
 | | RETURNED | NOT_RETURNED | ON_PAD |
 |---|---|---|---|
@@ -763,6 +771,7 @@ All write-backs **merge** into the order document (`set(..., merge=True)`) when
 |---|---|
 | Every phase change | `dronePhase`, `droneMessage`, `droneUpdatedAt` |
 | Phase REJECTED or ABORTED | also `status: CANCELED`, `droneOutcome` |
+| Phase LANDED | also `droneDelivered: true` |
 | Mission finished | `droneOutcome`, `droneReturn`, `droneOutcomeLabel`, `droneOutcomeReason`, `droneDelivered`, `droneReturned`, `droneUpdatedAt`, and `status` set to `DELIVERED` or `CANCELED` |
 
 Separate `droneOutcome` and `droneReturn` fields let the app branch on them:
@@ -789,7 +798,7 @@ the order's fault, so its id is left un-handled and it can be offered again.
 | Precision drop unsafe before release | climb back to the hold, retry once with a fresh window | aboard | after 2 attempts: RTL with the parcel |
 | Battery critical failsafe | LAND where it is | aboard | usually DID NOT RETURN |
 | Altitude hardlock | HOLD with BRAKE; take manual control | aboard | depends on the pilot |
-| Other failsafe (e.g. geofence) | immediate RTL, no turn, FC-flown | aboard | ABORTED or NOT DELIVERED |
+| Other failsafe (e.g. geofence; off on the real profile) | immediate RTL, no turn, FC-flown | aboard | ABORTED or NOT DELIVERED |
 | `emergency_stop` | EMERGENCY | - | NOT_RETURNED |
 
 The transmitter always wins: see [08-safety.md](08-safety.md) for the
@@ -800,8 +809,9 @@ pilot-override thresholds and the failsafe settings.
 ## 16. Key configuration values
 
 Values from [default.yaml](../../config/default.yaml), with the
-[real.yaml](../../config/real.yaml) override where one exists. Simulation
-([sim.yaml](../../config/sim.yaml)) overrides only the order source and gates.
+[real.yaml](../../config/real.yaml) override where one exists. In the `delivery`
+block, simulation ([sim.yaml](../../config/sim.yaml)) overrides only the order
+source and gates.
 
 | Key | default.yaml | real.yaml | Meaning |
 |---|---|---|---|
@@ -844,6 +854,7 @@ Values from [default.yaml](../../config/default.yaml), with the
 | `navigation.cruise_speed_ms` | 3.0 | 1.0 | |
 | `safety.max_altitude_m` | 2.0 | 5.0 | every commanded altitude is clamped to this |
 | `safety.geofence_radius_m` | 75.0 | - | in-flight failsafe |
+| `safety.failsafes_enabled` | true | false | Pi-side low-battery, link-loss and geofence RTL |
 | `payload.out_channel` / `lock_us` / `release_us` | 12 / 1100 / 1410 | - | release servo (AUX4) |
 
 ---
@@ -851,8 +862,9 @@ Values from [default.yaml](../../config/default.yaml), with the
 ## 17. Testing without a phone
 
 The whole chain can be exercised with no app, no network and no service-account
-key. Both test paths call the same `delivery_inject` service as production, so
-they exercise the real code rather than a parallel one.
+key. The command-line script (without `--to-file`) and the GCS button both call
+the same `delivery_inject` service, so they exercise the real order-handling code
+rather than a parallel one.
 
 ### From the command line: `scripts/inject_order.py`
 

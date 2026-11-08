@@ -58,7 +58,7 @@ The table lists what the flight software expects. Specifications come from the c
 | 11 | **USB Bluetooth dongle** (TP-Link UB500 class) | Link to the optional MedBox payload | Picked by sysfs bus path (USB) | [medbox_protocol.py](../../drone_stack/payload/medbox_protocol.py) |
 | 12 | **SH1106 1.3" OLED** + **3 push buttons** + **passive buzzer** | Front panel: pre-flight checks and status at the aircraft | I2C address `0x3C`; buttons on GPIO22/27/17; buzzer on GPIO18 | [panel.py](../../front_panel/panel.py) |
 | 13 | **6S LiPo, 4000 mAh** (CNHL) | Flight battery | Pi-side thresholds: low 21.6 V (3.6 V/cell), critical 20.4 V (3.4 V/cell) | [real.yaml](../../config/real.yaml) `safety:` |
-| 14 | Separate servo supply (5 V for the MG90S) | Powers both servos | GND common with the Pixhawk | [PROJECT_NOTES.md §6, §6b](../PROJECT_NOTES.md) |
+| 14 | Separate servo supplies (the MG90S has its own 5 V supply) | Power the servos; the Pixhawk sends only the signal | Each supply's GND is common with the Pixhawk | [PROJECT_NOTES.md §6, §6b](../PROJECT_NOTES.md) |
 | 15 | RC transmitter + receiver | Manual override, Land switch, motor emergency stop, payload Button A | See [section 8](#8-rc-transmitter-and-aux-switch-map) | [set_rc_aux.py](../../scripts/set_rc_aux.py) |
 | 16 | GPS on the Pixhawk | Position, home latch, geofence | Needs at least 6 satellites and a 3D fix (`min_gps_fix_type: 3`) | [default.yaml](../../config/default.yaml) `safety:` |
 
@@ -156,7 +156,7 @@ flowchart TB
     B1 -. "HTTP to the GCS" .-> G5
 ```
 
-Pixhawk parameter scripts in [scripts/](../../scripts/) (`set_*.py`, `servo_*.py`, `aux_pin_check.py`, `preflight_check.py --fc`) open `/dev/ttyACM0` themselves. Stop `aerix-gcs` before running them and start it again afterwards.
+Pixhawk parameter scripts in [scripts/](../../scripts/) (`set_*.py`, `servo_diagnose.py`, `aux_pin_check.py`, `read_mode_params.py`, `rc_monitor.py`, `preflight_check.py --fc`) open `/dev/ttyACM0` themselves. Stop `aerix-gcs` before running them and start it again afterwards. The exception is `servo_calibrate.py`, which goes through the GCS HTTP API and needs `aerix-gcs` running.
 
 ---
 
@@ -174,7 +174,7 @@ Pixhawk parameter scripts in [scripts/](../../scripts/) (`set_*.py`, `servo_*.py
 | SH1106 OLED | I2C bus 1: SDA pin 3 (GPIO2), SCK pin 5 (GPIO3) | address `0x3C` | 100 kHz | constants in `panel.py` | `aerix-panel` |
 | Button B1 UP | pin 15 | GPIO22, pull-up | n/a | `PIN_UP` | `aerix-panel` |
 | Button B2 DOWN | pin 13 | GPIO27, pull-up | n/a | `PIN_DOWN` | `aerix-panel` |
-| Button B3 SELECT | pin 11 | GPIO17, pull-up (3 s hold = shutdown) | n/a | `PIN_SELECT` | `aerix-panel` |
+| Button B3 SELECT | pin 11 | GPIO17, pull-up (3 s hold = shutdown menu) | n/a | `PIN_SELECT` | `aerix-panel` |
 | Passive buzzer | pin 12 | GPIO18 (PWM) | n/a | `PIN_BUZZER` | `aerix-panel` |
 | MG995 payload servo | Pixhawk AUX4 | `SERVO12` | 50 Hz analog PWM (`SERVO_RATE = 50`) | `payload.out_channel: 12` | FC, commanded by the Pi |
 | MG90S tilt servo | Pixhawk AUX6 | `SERVO14` | 50 Hz analog PWM | `aux2_servo.out_channel: 14` | FC, commanded by the Pi |
@@ -288,7 +288,7 @@ sequenceDiagram
 
 ## 7. Why the servo channels moved (dead AUX pins)
 
-The servo pins changed three times in five weeks. The history is worth knowing because the failure looked like a software bug and was not one.
+The servo pins were moved three times (both servos on 2026-09-06, the payload again on 2026-09-11), five weeks after the first servo was fitted. The history is worth knowing because the failure looked like a software bug and was not one.
 
 ```mermaid
 flowchart TB
@@ -366,8 +366,9 @@ Notes:
 
 - **AutoTune** only initialises when armed and flying in AltHold or Loiter. On the bench, flipping the old ch7 produced `Mode change to AUTOTUNE failed: init failed`. That message was expected and not a bug. Channel 7 has since been given to the payload.
 - **Land** and **Motor E-Stop** act immediately. Every FC `STATUSTEXT` is forwarded to the GCS console and the on-screen mode banner, so switch actions are visible even when they are not mode changes.
-- **Open transmitter issue.** [PROJECT_NOTES.md §11](../PROJECT_NOTES.md) records `FLTMODE_CH=6` with several positions set to STABILIZE. In STABILIZE the throttle stick maps directly to motor output, so a mid-delivery flick onto one of those detents with the throttle down is a free fall. `set_mode_switch_ch9.py` is the remedy. Confirm the live values with [read_mode_params.py](../../scripts/read_mode_params.py) before every flight day, and keep the throttle stick at mid during autonomous flight.
+- **Open transmitter issue.** [PROJECT_NOTES.md §11](../PROJECT_NOTES.md) records `FLTMODE_CH=6` with several positions set to STABILIZE. In STABILIZE the throttle stick maps directly to motor output, so a mid-delivery flick onto one of those detents with the throttle down is a free fall. `set_mode_switch_ch9.py` moves the mode switch to ch9 (LOW Stabilize, MID PosHold, HIGH SmartRTL), so its LOW position is still STABILIZE. Confirm the live values with [read_mode_params.py](../../scripts/read_mode_params.py) before every flight day, and keep the throttle stick at mid during autonomous flight.
 - The `RCx_OPTION` scripts write FC parameters with read-back. Run them only while `aerix-gcs` is stopped.
+- **`set_rc_aux.py` still writes `RC7_OPTION = 17` (AutoTune).** Running it takes channel 7 back from Button A. Run [clear_rc7_autotune.py](../../scripts/clear_rc7_autotune.py) afterwards.
 
 ---
 
@@ -409,7 +410,7 @@ Mount the LiDAR so the scan plane is level and clear of props and landing gear a
 - Mounted facing **down**. It measures height above ground for the precision drop **only** and is not an avoidance sensor.
 - A reading with signal strength below `min_strength: 100` is treated as noise. `4500` cm is the sensor's "no target" code and is rejected.
 - Drop logic trusts it only when fresh: `drop_rangefinder_stale_s: 0.5`. A jump that is too short (`drop_under_jump_m: 0.7`) or too long (`drop_over_jump_m: 1.5`) aborts the drop. See [04 · Delivery mission](04-delivery-mission.md).
-- Bench test: [test_tf02_pro.py](../../scripts/test_tf02_pro.py).
+- Bench test: [test_tf02_pro.py](../../scripts/test_tf02_pro.py) `--port /dev/ttyAMA0`, with `aerix-gcs` stopped because `RangefinderNode` owns the port.
 
 ### Pi Camera v3: mounted upside down, on a tilt servo
 
@@ -443,11 +444,12 @@ flowchart LR
     P5 --> OLED
     P15 --> B1["B1 UP"]
     P13 --> B2["B2 DOWN"]
-    P11 --> B3["B3 SELECT<br/>3 s hold = shutdown"]
+    P11 --> B3["B3 SELECT<br/>3 s hold = shutdown menu"]
     P12 --> BZ["Passive buzzer"]
 ```
 
 - Buttons use internal pull-ups with 30 ms debounce. Pressed means pulled to GND.
+- Holding B3 for 3 s opens a shutdown menu: B3 confirms, B1 or B2 cancels, and it is refused while armed.
 - The I2C bus runs at 100 kHz, so a full 1024-byte frame takes about 95 ms. The panel sends only the pages that changed.
 - The buzzer is passive and driven by PWM. A 2026-10-04 frequency sweep found it loudest near 2.0 kHz and 3.5 kHz.
 - On the Pi 5 the GPIOs sit behind the RP1 chip, so the panel looks up the RP1 `gpiochip` by its label rather than assuming a fixed number.
@@ -476,15 +478,15 @@ All scripts are in [scripts/](../../scripts/). Those marked **FC** open the Pixh
 | [servo_diagnose.py](../../scripts/servo_diagnose.py) `<ch>` | FC, read | Servo params and whether `servoN_raw` tracks |
 | [aux_pin_check.py](../../scripts/aux_pin_check.py) | FC, read | Is a relay or GPIO claiming an AUX pin? |
 | [set_servo_travel.py](../../scripts/set_servo_travel.py) `--ch N` | FC, **write** | Set `SERVO<n>_MIN/MAX` |
-| [servo_calibrate.py](../../scripts/servo_calibrate.py) | FC, **write** | Servo calibration helper |
-| [set_rc_aux.py](../../scripts/set_rc_aux.py) | FC, **write** | `RC6/7/8_OPTION` with read-back |
+| [servo_calibrate.py](../../scripts/servo_calibrate.py) | GCS `/api/command` (keep `aerix-gcs` running) | Step a servo from a known-good position to find its real working limits |
+| [set_rc_aux.py](../../scripts/set_rc_aux.py) | FC, **write** | `RC6/7/8_OPTION` with read-back (note: sets `RC7_OPTION = 17`, so run `clear_rc7_autotune.py` after it) |
 | [clear_rc7_autotune.py](../../scripts/clear_rc7_autotune.py) | FC, **write** | `RC7_OPTION = 0` to free Button A |
 | [set_mode_switch_ch9.py](../../scripts/set_mode_switch_ch9.py) | FC, **write** | Flight-mode switch on ch9 |
 | [read_mode_params.py](../../scripts/read_mode_params.py) | FC, read | Current flight-mode switch setup |
-| [rc_monitor.py](../../scripts/rc_monitor.py) | read | Live RC channel values |
+| [rc_monitor.py](../../scripts/rc_monitor.py) | FC, read | Live RC values for ch7 (Button A) and ch9 |
 | [lidar_orientation_check.py](../../scripts/lidar_orientation_check.py) | GCS `/ws`, read | Physical left/right check of the LiDAR |
-| [test_tf02_pro.py](../../scripts/test_tf02_pro.py) | UART, read | TF02-Pro frames, strength and range |
-| [camera_latency.py](../../scripts/camera_latency.py) | GCS, read | Encode rate compared with delivered frame rate over the link |
+| [test_tf02_pro.py](../../scripts/test_tf02_pro.py) `--port /dev/ttyAMA0` | UART, read (stop `aerix-gcs`) | TF02-Pro frames, strength and range. Always pass `--port`: the auto-detect tries `ttyUSB*`, `ttyACM*` and `/dev/serial0`, none of which is the TF02. |
+| [camera_latency.py](../../scripts/camera_latency.py) | GCS HTTP, read | Where camera lag comes from, stage by stage |
 
 ---
 
@@ -498,7 +500,7 @@ Following [evidence/EVIDENCE_TIERS.md](../../evidence/EVIDENCE_TIERS.md), here i
 | Phone handshake, servo release and signed receipt chain | **ON HARDWARE** | Receipts 27 Aug to 23 Sep 2026. This proves the chain, **not** a count of deliveries. |
 | RC Land and Motor E-Stop switches | Verified on the FC | Bench STATUSTEXT and flight dataflash logs ([PROJECT_NOTES.md §6a, §11](../PROJECT_NOTES.md)) |
 | LiDAR noise rejection (quality and persistence gates) | **SIM-TESTED + bench A/B** | 202 bench revolutions measured on 2026-09-21 |
-| TF02-Pro precision drop | **SIM-TESTED** | Deployed but not yet flown as of the evidence review |
+| TF02-Pro precision drop | **SIM-TESTED** | Deployed but not yet flown as of 26 Sep 2026 |
 | Person detection on the Hailo-8 | **OFFLINE** | Recorded aerial frames, not a live flight trial |
 | Payload `lock_us` / `release_us` for the MG995 | **Open** | Must be re-measured on the fitted mechanism, then the envelopes narrowed |
 | Flight-ready configuration | **No** | `safety.failsafes_enabled: false` for bench work, so `preflight_check.py` reports NO-GO |

@@ -48,7 +48,8 @@ onboard hardware and software:
    person's phone holds the one-time token for this order**.
 4. Only after that proof does it descend to about **0.65 m above the ground**
    (measured by a downward laser rangefinder), open the release servo, climb
-   back up and fly home.
+   back up and fly home. This scan-and-drop sequence is so far proven in
+   simulation only (see section 9).
 
 **Why it is interesting.** The whole flight brain and the ground control
 station run on **one Raspberry Pi 5** carried on the aircraft, in **pure
@@ -71,7 +72,7 @@ go and *when* to release; the Pixhawk keeps the aircraft in the air.
 | Step | Who / what | What happens |
 |---:|---|---|
 | 1 | Customer app (Flutter) | Recipient drops a pin; an order document is written to the Firestore `orders` collection with `targetLat` / `targetLng` and a per-order delivery token |
-| 2 | `FirebaseDeliveryNode` on the Pi | Picks up the `DISPATCHED` order, validates it (GPS fix, within `max_delivery_radius_m` 60 m of home, inside the 75 m geofence) |
+| 2 | `FirebaseDeliveryNode` on the Pi | Picks up the `DISPATCHED` order, validates it (3-D GPS fix, target within `max_delivery_radius_m` 60 m of home) |
 | 3 | Operator at the GCS browser | Presses **ACCEPT & FLY** (`auto_accept: false` on the real aircraft: a database row never arms the drone by itself) |
 | 4 | `NavigationNode` + Pixhawk | Splits the route into legs (25 m each, at most 24), arms, takes off to 5 m, cruises at 1.0 m/s with Pi-side LiDAR avoidance |
 | 5 | Camera + Hailo-8 | At the drop point: descends to the scan altitude (4 m), tilts the camera down, orbits to look for a person and locks onto them |
@@ -226,7 +227,7 @@ means a crash in the BLE stack or the OLED cannot take down flight control.
 ```mermaid
 flowchart TD
     A["Customer places order in app"] --> B["Order written to Firestore"]
-    B --> C{"Order valid? GPS fix, within 60 m, inside geofence"}
+    B --> C{"Order valid? GPS fix, target within 60 m of home"}
     C -- "No" --> X1["Order refused - aircraft never moves"]
     C -- "Yes" --> D["Operator presses ACCEPT and FLY"]
     D --> E["Arm, take off to 5 m"]
@@ -275,6 +276,7 @@ sequenceDiagram
     BLE->>BLE: Ledger intent record
     BLE->>GCS: Request precision drop
     GCS->>Nav: precision_drop
+    BLE-->>App: RESULT DESCENDING
     Nav->>FC: Approach to 1.8 m from recipient
     loop Descend in 0.5 m steps
         RF-->>Nav: Height above ground
@@ -295,7 +297,8 @@ successful drop followed by a landing in a field is not a clean flight:
 |---|---|
 | DELIVERED, FAILED, ABORTED, NEVER_FLEW | RETURNED, NOT_RETURNED, ON_PAD, UNKNOWN |
 
-"Returned" means the aircraft finished within `home_radius_m` (15 m) of home;
+"Returned" means the aircraft is down and disarmed within `home_radius_m`
+(15 m) of home;
 the landing itself is commanded once it is inside `land_radius_m` (2 m).
 
 ---
@@ -337,10 +340,12 @@ the landing itself is commanded once it is inside `land_radius_m` (2 m).
   video, flight recording and replay, and a matching OLED front panel.
 - **Simulation from the same code.** Mock Pixhawk, LiDAR and rangefinder plus
   a simulated world; the switch between sim and real is a YAML profile.
-- **Threat model with a test per attack.**
-  [THREAT_MODEL.md](../security/THREAT_MODEL.md) rows are each backed by
-  [tests/test_attack_table.py](../../tests/test_attack_table.py), and the
-  protocol was model-checked with Verifpal.
+- **Threat model with tests for the drone-side attacks.**
+  [THREAT_MODEL.md](../security/THREAT_MODEL.md) lists each attack with its
+  status; the drone-side mitigations are pinned by
+  [tests/test_attack_table.py](../../tests/test_attack_table.py), some rows are
+  still open (they need the phone app), and the protocol was model-checked
+  with Verifpal (bounded, 2 sessions).
 
 ---
 
@@ -447,15 +452,16 @@ flowchart LR
 | Formal protocol model | Machine-checked, bounded (Verifpal, 2 sessions) | Current app fails 4 of 6 queries because of attack T29; with the 16-byte nonce fix every parcel-releasing query passes |
 | T29 signing-oracle attack | BENCH-SW, attack confirmed | Fix belongs in the phone app |
 | Person detection at the drop point | OFFLINE | 64.4 % recall, 57.4 % precision on 40 aerial frames |
-| Person scan and precision drop | **SIM-TESTED** | Deployed on the aircraft but not yet flown (as of 26 Sep 2026) |
+| Person scan and precision drop | **SIM-TESTED** | Deployed on the aircraft but not yet flown (as of 26 Sep 2026, when the release height was 1 m; it was lowered to 0.65 m on 10 Oct) |
 | Picking the phone holder among 2-3 people | **SIM-TESTED** | 0.17-1.33 % wrong picks, 42-77 % identified, in simulation |
 | LiDAR avoidance around the handover | SIM-TESTED, plus a bench noise A/B | Flight experiment still to do |
 | 5 m ceiling and stand-down on pilot takeover | SIM-TESTED; takeover seen ON HARDWARE (27 Sep) | - |
 | Novelty layer (markerless landing zone, dual-factor auth, motion abort) | **DESIGN** | Disabled by default, never deployed, thresholds are guesses |
-| MedBox integrity monitor | Bench dry run of the firmware | Advisory payload; see the [MedBox add-on](../../addons/medbox/README.md) |
+| MedBox integrity monitor | Bench only (firmware on the ESP32, bridge unit-tested) | Not flown; advisory payload; see the [MedBox add-on](../../addons/medbox/README.md) |
 
 **Test suite.** On 2026-10-08 the pytest suite reported 1149 passed and
-1 skipped (the skip needs `libcamera`). Test counts in this project are always
+1 skipped (the skip needs `libcamera`), on Python 3.11 and 3.13 off the
+aircraft; it has not yet been re-run on the Pi. Test counts in this project are always
 quoted with a date, because the suite keeps growing.
 
 **Bench state.** The real profile ships with GCS-side failsafes switched off

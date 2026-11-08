@@ -42,7 +42,7 @@ Python instead of a robotics middleware:
 
 | Idea | Where it lives | Size |
 |---|---|---|
-| Publish/subscribe bus | [message_bus.py](../../drone_stack/bus/message_bus.py), [topics.py](../../drone_stack/bus/topics.py) | ~250 lines |
+| Publish/subscribe bus | [message_bus.py](../../drone_stack/bus/message_bus.py), [topics.py](../../drone_stack/bus/topics.py) | ~225 lines |
 | Typed messages | [messages.py](../../drone_stack/msg/messages.py) | dataclasses |
 | Request/response services | [services.py](../../drone_stack/srv/services.py) | ~80 lines |
 | Node base class + supervisor | [node.py](../../drone_stack/utils/node.py) | ~230 lines |
@@ -205,7 +205,8 @@ nobody had asked for. The rule now has two layers:
    `/delivery/ble_result`, `/delivery/ble_phone`).
 2. Subscribers to those topics also pass `deliver_latched=False`
    (`MavlinkNode` for `/cmd/mavlink`; `NavigationNode` for `/mission/cmd`,
-   `/delivery/ble_result` and `/delivery/ble_phone`).
+   `/delivery/ble_result` and `/delivery/ble_phone`; `FirebaseDeliveryNode`
+   for `/delivery/ble_result`).
 
 The same reasoning covers the delivery events: a recreated navigator must not
 be handed a previous order's "delivered" result or a previous recipient's
@@ -409,8 +410,8 @@ stateDiagram-v2
     Stopping --> [*]: on_stop(), unsubscribe all
 ```
 
-- **Level 1, inside the thread:** any exception in `on_start`, `step` or
-  `on_stop` is logged, `on_stop()` is called, and the node waits an
+- **Level 1, inside the thread:** any exception in `on_start` or `step` is
+  logged, `on_stop()` is called (its own exceptions are logged and ignored), and the node waits an
   exponential backoff (`0.5 s x 2^min(restarts, 5)`, capped at 10 s) before
   calling `on_start()` again. The thread itself survives, so its
   subscriptions survive too.
@@ -520,7 +521,7 @@ from `default.yaml`; `real.yaml` raises some of them.
 
 | Node (thread name) | Rate | Role |
 |---|---|---|
-| [MavlinkNode](../../drone_stack/nodes/mavlink_node.py) (`mavlink`) | 50 Hz | Connects with retry, maps each telemetry dataclass to its topic, queues `/cmd/mavlink` commands and flushes them to the interface on its own thread. Also watches transmitter channel `payload.rc_channel` (9) and drives the payload servo on `payload.out_channel` (12) on a switch edge: above 1700 us release, below 1300 us lock, dead-band between. |
+| [MavlinkNode](../../drone_stack/nodes/mavlink_node.py) (`mavlink`) | 50 Hz | Connects with retry, maps each telemetry dataclass to its topic, queues `/cmd/mavlink` commands and flushes them to the interface on its own thread. Also watches transmitter channel `payload.rc_channel` (7, Button A) and drives the payload servo on `payload.out_channel` (12) on a switch edge: above 1700 us release, below 1300 us lock, dead-band between. |
 | [LidarNode](../../drone_stack/nodes/lidar_node.py) (`lidar`) | 10 Hz default, 25 Hz in real.yaml | Reads completed revolutions from the LiDAR interface, publishes `/scan` and `/cloud`, scan state and LiDAR diagnostics. Filtering lives upstream (driver and node) so every consumer sees one view. |
 | [RangefinderNode](../../drone_stack/nodes/rangefinder_node.py) (`rangefinder`) | 20 Hz | Downward TF02-Pro height above ground, used only by the precision drop. |
 | [FusionNode](../../drone_stack/nodes/fusion_node.py) (`fusion`) | 30 Hz | Complementary estimator; publishes `/state/fused` in a local ENU frame. |
@@ -570,7 +571,7 @@ Built from [topics.py](../../drone_stack/bus/topics.py) and the
 | `/scan` | `LaserScan` | LidarNode | FusionNode, ObstacleNode, ProximityNode, DiagnosticsNode, GcsHub (read) |
 | `/cloud` | `PointCloud` | LidarNode | WebDashboard (standalone mode) |
 | `/scan/state` | `ScanState` | LidarNode | GcsHub (read) |
-| `/diagnostics/lidar` | `Diagnostic` | LidarNode | (diagnostic record) |
+| `/diagnostics/lidar` | `Diagnostic` | LidarNode | (no subscriber; latched for inspection) |
 | `/rangefinder` | `RangeReading` | RangefinderNode | NavigationNode, GcsHub (read) |
 | `/diagnostics/rangefinder` | `Diagnostic` | RangefinderNode | GcsHub (read) |
 | `/state/fused` | `FusedState` | FusionNode | ObstacleNode, NavigationNode, DiagnosticsNode, novelty DeliveryNode |
@@ -582,14 +583,14 @@ Built from [topics.py](../../drone_stack/bus/topics.py) and the
 
 | Topic | Message | Publisher(s) | Consumers | Event? |
 |---|---|---|---|---|
-| `/mission/state` | `MissionState` | NavigationNode | FusionNode, FirebaseDeliveryNode, GcsHub | |
+| `/mission/state` | `MissionState` | NavigationNode | FusionNode, FirebaseDeliveryNode, CameraManager (GCS), GcsHub | |
 | `/mission/plan` | `Mission` | NavigationNode | GcsHub (read; plan export) | |
 | `/avoidance` | `AvoidanceStatus` | NavigationNode | GcsHub (read) | |
 | `/mission/cmd` | `NavCommand` | novelty DeliveryNode (when enabled) | NavigationNode (calls the named service) | **yes** |
-| `/cmd/mavlink` | `NavCommand` | NavigationNode, ProximityNode (`obstacle_distance`), GcsHub (`set_mode`, e-stop `disarm`, `set_servo`, camera tilt), novelty DeliveryNode | MavlinkNode | **yes** |
+| `/cmd/mavlink` | `NavCommand` | NavigationNode, ProximityNode (`obstacle_distance`), FirebaseDeliveryNode (`upload_mission`), GcsHub (`set_mode`, e-stop `disarm`, `set_servo`, camera tilt), novelty DeliveryNode | MavlinkNode | **yes** |
 | `/delivery/order` | `DeliveryOrder` | FirebaseDeliveryNode | (no core subscriber; informational) | |
 | `/delivery/state` | `DeliveryState` | FirebaseDeliveryNode | GcsHub (delivery panel) | |
-| `/delivery/ble_result` | `DeliveryBleResult` | GcsHub (bridged from aerix-ble), NavigationNode (precision-drop release) | NavigationNode | **yes** |
+| `/delivery/ble_result` | `DeliveryBleResult` | GcsHub (bridged from aerix-ble), NavigationNode (precision-drop release) | NavigationNode, FirebaseDeliveryNode | **yes** |
 | `/delivery/ble_phone` | `BlePhoneSignal` | GcsHub (bridged RSSI samples and phone GPS fixes from aerix-ble) | NavigationNode | **yes** |
 | `/diagnostics` | `SystemDiagnostics` | DiagnosticsNode | GcsHub (read) | |
 | `/diagnostics/nodes` | `list[NodeHealth]` | Supervisor | DiagnosticsNode | |
@@ -662,15 +663,18 @@ flowchart LR
     T_MSTATE --> FUS
     T_MSTATE --> FBD
     T_MSTATE --> HUB
+    T_MSTATE --> CAMM
 
     NAV --> T_CMD
     PRX --> T_CMD
     HUB --> T_CMD
+    FBD --> T_CMD
     T_CMD --> MAVN
 
     HUB --> T_BLER
     NAV --> T_BLER
     T_BLER --> NAV
+    T_BLER --> FBD
     HUB --> T_BLEP
     T_BLEP --> NAV
 
@@ -796,8 +800,8 @@ Things worth noticing:
   still refuse (pre-arm checks); the truth arrives later as `/telemetry/armed`
   and any `STATUSTEXT` on `/telemetry/fc_message`.
 - The serial port is only ever written by the `mavlink` thread
-  (`_flush_commands`), so commands from the hub, navigator and proximity node
-  can never interleave mid-message.
+  (`_flush_commands`), so commands from the hub, navigator, proximity node and
+  delivery node can never interleave mid-message.
 - Because `/cmd/mavlink` is an event topic, if `MavlinkNode` dies between
   steps 7 and 12 its replacement starts with an empty queue: the `arm` is
   lost, never replayed later.
@@ -845,7 +849,8 @@ flowchart TB
 Two details:
 
 - **The altitude ceiling is enforced in the link too.** `_with_ceiling` copies
-  `safety.max_altitude_m` into the `mavlink` section handed to `RealMavlink`,
+  `safety.max_altitude_m` into the `mavlink` section handed to `RealMavlink`
+  (unless that section already sets `max_altitude_m`),
   so a mission uploaded to the flight controller is clamped on its way in,
   even though AUTO then flies it with the navigator out of the loop.
 - **Live source switching.** The GCS `set_source` command stops the
@@ -899,7 +904,7 @@ flowchart LR
 
 | Unit | Runs | Owns | Talks to the GCS by |
 |---|---|---|---|
-| `aerix-gcs` | `python -m drone_stack.gcs.server --config config/real.yaml` from the project `.venv`, `GCS_PORT=8090`, with a 10 s start delay so the USB devices enumerate | Pixhawk serial port, LiDAR, TF02-Pro UART, camera, Hailo accelerator, HTTP port 8090 | (it is the GCS) |
+| `aerix-gcs` | `python -m drone_stack.gcs.server --config config/real.yaml` from the project `.venv` on port 8090, with a 10 s start delay so the USB devices enumerate | Pixhawk serial port, LiDAR, TF02-Pro UART, camera, Hailo accelerator, HTTP port 8090 | (it is the GCS) |
 | `aerix-ble` | [ble_handshake_start.sh](../../scripts/ble_handshake_start.sh), which waits for the **on-board** Bluetooth adapter, prepares the RAM-only order directory `/run/aerix-ble`, then starts [drone_ble_peripheral.py](../../drone_stack/ble_handshake/drone_ble_peripheral.py) from its own venv | on-board Bluetooth controller, the live order token directory | a background thread polls `/api/state`; it POSTs `ble_delivery_result`, `ble_phone_signal`, `ble_phone_fix`, `precision_drop` and `set_servo` |
 | `aerix-payload` | [medbox_bridge.py](../../drone_stack/payload/medbox_bridge.py) from its own venv; unit file [aerix-payload.service](../../scripts/aerix-payload.service), `User=pi`, `Nice=5`, `Restart=always` | the USB Bluetooth dongle only; stays off the air unless the payload kind is `medbox` | polls `/api/state`, POSTs `medbox_status` |
 | `aerix-panel` | [panel.py](../../front_panel/panel.py) | SH1106 OLED, three buttons, buzzer | polls `/api/state`; sends payload LOCK/RELEASE via `set_servo` and height changes via `set_flight_altitude` (both refused while armed), so the GCS clamp and console log still apply |

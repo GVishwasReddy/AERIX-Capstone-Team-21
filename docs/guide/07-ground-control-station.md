@@ -279,7 +279,7 @@ sequenceDiagram
     S-->>B: ack arm with result
 ```
 
-**Browser side.** In [`app.js`](../../drone_stack/gcs/static/app.js), `connect()` only queues the newest frame and renders it once per animation frame (`flushFrame`). A watchdog shows a `STALE n.ns` pill after 1.5 s without any message. After 5 s it drops the socket, dials a new one and reopens the camera stream. This catches Wi-Fi dropouts in flight that never close the socket. The `GCS` header pill shows the page's own link round trip from the ping and pong.
+**Browser side.** In [`app.js`](../../drone_stack/gcs/static/app.js), `connect()` only queues the newest frame and renders it once per animation frame (`flushFrame`). A watchdog shows a `STALE n.ns` pill after 1.5 s without any message. After 5 s it drops the socket, dials a new one and reopens the camera stream. This catches Wi-Fi dropouts in flight that never close the socket. The `GCS` header pill shows this connection's round trip as measured by the Pi from the page's own acks (`net.rtt_ms`), coloured by its queueing delay (`net.qdelay_ms`). The ping and pong every 2 s feed the `Net ms` sparkline in System health and keep the watchdog fed.
 
 ---
 
@@ -312,7 +312,7 @@ flowchart TB
 ```
 
 ### 8.1 Header and HUD
-- **Pills:** `LINK` (MAVLink up or lost), `GCS` (this browser's own round trip, or `STALE`), `SIM`/`REAL`, current flight mode, `ARMED`/`DISARMED`.
+- **Pills:** `LINK` (MAVLink up or lost), `GCS` (this browser's link round trip as measured by the Pi, or `STALE`), `SIM`/`REAL`, current flight mode, `ARMED`/`DISARMED`.
 - **Chips:** satellites, battery voltage, MAVLink packets, autopilot CPU, clock. There are also a light/dark theme toggle and a density toggle.
 - **HUD strip:** altitude, ground speed, vertical speed, heading, battery, satellites, and **AGL** from the downward TF02-Pro.
 - **Mode toast:** a translucent centred banner announces every flight-mode change and any FC STATUSTEXT about aux switches (for example a motor emergency stop switch). That way, transmitter actions are visible on the ground station.
@@ -338,7 +338,7 @@ Details worth knowing:
 ### 8.3 Radar column
 - **LiDAR radar** (canvas): the scan with the 0° front line and the blanked rear wedge from `lidar_fov`, tracked obstacles coloured by danger, zoom and expand buttons, and an **EMERGENCY BRAKING** overlay.
 - **AGL gauge**: TF02-Pro height on a bar marked with the drop-release height (`target_agl_m`) and the abort floor (`abort_agl_m`).
-- **Flight mode grid**: one button per ArduCopter mode (STABILIZE, ALT HOLD, LOITER, GUIDED, AUTO, RTL, LAND, BRAKE and the rest), each sending `set_mode`. It also shows *actual* vs *requested* mode.
+- **Flight mode grid**: one button per ArduCopter mode (STABILIZE, ALT HOLD, LOITER, GUIDED, AUTO, RTL, LAND, BRAKE and the rest), each sending `set_mode`. The button for the mode the FC currently reports is highlighted.
 
 ### 8.4 Map panel
 - **Leaflet map** with Street, Satellite and Terrain layers. It draws the aircraft, home, the GPS trail, mission waypoints and the active delivery target. It shows drone and cursor coordinates.
@@ -394,7 +394,7 @@ stateDiagram-v2
     pending --> encoding: disarm observed (set_armed false)
 ```
 
-An arming aircraft always wins: a running render is killed and resumes from its on-disk job after the next disarm ("footage always outranks pixels"). A render is also never started until the FC has actually reported a disarmed state, so it cannot start during boot on a guess.
+An arming aircraft always wins: a running render is killed, its job file stays on disk, and the render restarts from frame zero after the next disarm ("footage always outranks pixels"). A render is also never started until the FC has actually reported a disarmed state, so it cannot start during boot on a guess.
 
 ### 9.4 What the operator sees
 The `recording` block (also at `GET /api/recording`) carries `enabled`, `state`, `active`, `reason`, `message`, `progress`, `pending`, `upgrading`, `seq`, `airborne`, `elapsed_s`, `frames`, `dropped`, `bytes`, `min_seconds`, `free_mb` and `clip` (duration, size, resolution, fps, `stabilized`, `ended`, `seq`). The badge on the camera tile reads one of:

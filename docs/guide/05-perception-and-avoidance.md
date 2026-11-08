@@ -195,7 +195,7 @@ flowchart TD
     W -->|no| L["For each finite return at bin i, range r"]
     L --> V{"At least filter_min_support (2) of the last 3 revolutions<br/>hold a return within plus or minus 3 bins AND within 0.30 m?"}
     V -->|yes| K["Keep"]
-    V -->|no| FA{"filter_fast_approach and the NEWEST revolution<br/>had a return within 3 bins that was farther by at most 0.30 m?"}
+    V -->|no| FA{"filter_fast_approach and the nearest return within 3 bins<br/>in the NEWEST revolution is farther by at most 0.30 m?"}
     FA -->|yes| K2["Keep: closing obstacle, no waiting for a vote"]
     FA -->|no| D["Blank to inf"]
     K --> OUT["Filtered scan; store raw scan as evidence"]
@@ -321,7 +321,7 @@ It produces **two different velocities** that answer different questions:
 |---|---|---|---|
 | `closing_ms` | body | How fast the gap is shrinking (includes our own motion) | Direction of approach |
 | `vx_m_s`, `vy_m_s`, `speed_m_s` | world ENU | The object's own motion over the ground, after removing our translation **and yaw rate** | Is it moving under its own power? |
-| `is_dynamic` | - | `speed` above `dynamic_speed_ms` for `dynamic_min_hits` consecutive revolutions | Brake-distance padding |
+| `is_dynamic` | - | raw per-frame own-speed at least `dynamic_speed_ms` for `dynamic_min_hits` consecutive revolutions | Brake-distance padding |
 
 Yaw matters: at 0.8 m/s, an obstacle 5 m off the nose moves through the body frame faster from a gentle yaw than from forward flight. Ignoring yaw rate would report a fence post as a 2 m/s crossing target every time the aircraft turns.
 
@@ -331,7 +331,7 @@ stateDiagram-v2
     New --> Tracked: matched again (hits at least min_hits 2)
     Tracked --> Tracked: matched, velocity smoothed (alpha 0.5)
     Tracked --> Dynamic: raw own-speed at least 0.5 m/s for 3 consecutive revolutions
-    Dynamic --> Tracked: own-speed falls below 0.5 m/s
+    Dynamic --> Tracked: raw own-speed falls below 0.5 m/s (counter resets)
     Tracked --> Tracked: speed above max_speed_ms 6.0 treated as association error, zeroed
     New --> Retired: misses exceed max_misses 3
     Tracked --> Retired: misses exceed max_misses 3
@@ -465,14 +465,14 @@ The three-cone "left or right?" dodge collapses the scan into three numbers, so 
 3. **Valleys.** Contiguous free runs, not wrapped around (the window has two hard ends). Gaps narrower than `avoidance_vfh_min_valley_deg` (18 deg) are discarded.
 4. **Choice.** In each valley, the point closest to the goal while keeping 9 deg from either edge. Cost = `goal_weight` x |candidate - goal| + `hysteresis_weight` x |candidate - previous|. No valley means **TRAPPED**, and the caller brakes, never reverses.
 
-**Safety radius is the subtle knob.** It must comfortably exceed the brake distance, or VFH+ aims to miss inside the zone the brake calls an emergency. The real.yaml comment records a closed-loop sweep against a 0.3 m pole at 1.0 m/s:
+**Safety radius is the subtle knob.** It must comfortably exceed the brake distance, or VFH+ aims to miss inside the zone the brake calls an emergency. The real.yaml comment records a closed-loop sweep against a 0.3 m pole at 1.0 m/s, run on the earlier band (8.0 m in to a 2.70 m padded brake, before the stop moved from 1.7 m to 1.5 m):
 
 | radius (m) | miss (m) | braked | max lateral (m) |
 |---|---|---|---|
 | 1.0 | 1.70 | yes | 1.31 |
 | 1.5 | 1.49 | yes | 1.57 |
 | 2.0 | 1.86 | no | 1.97 |
-| **2.5 (flown setting)** | **2.10** | **no** | **2.25** |
+| **2.5 (shipped setting)** | **2.10** | **no** | **2.25** |
 | 3.0 | 2.36 | no | 2.54 |
 | 3.5 | 2.63 | no | 2.86 |
 
@@ -692,7 +692,7 @@ From [docs/PROJECT_NOTES.md](../PROJECT_NOTES.md) section 13 (2026-09-21):
 
    Flicker calls for **persistence**, not smoothing.
 3. **Thresholds are non-monotonic.** Both `quality_min` and the VFH safety radius get *worse* past their knee. Re-measure before moving them; do not tune by eye.
-4. **What was measured vs reasoned.** Measured: an A/B replaying identical captured samples through both pipelines removed **0 of 165 solid bins**, **25 of 34 flickering bins (73.5%)**, at a cost of 2.0% of returns; 22 tests in [test_scan_filter.py](../../tests/test_scan_filter.py) pass and go red when any mechanism is patched out. Reasoned only: persistence's real value is dust, wet-ground glint and rain in flight; a static bench barely produces those transients (isolated returns 0.9% to 0.8%).
+4. **What was measured vs reasoned.** Measured: an A/B replaying identical captured samples through both pipelines removed **0 of 165 solid bins**, **25 of 34 flickering bins (73.5%)**, at a cost of 2.0% of returns; 22 tests in [test_scan_filter.py](../../tests/test_scan_filter.py) pass, and each of the five mechanisms turns them red when patched out. Reasoned only: persistence's real value is dust, wet-ground glint and rain in flight; a static bench barely produces those transients (isolated returns 0.9% to 0.8%).
 5. **A live before/after in a room with people moving will look worse**, and that does not mean the filter failed: scene drift dominates. Only an A/B over identical captured samples separates the filter from the scene.
 
 ---

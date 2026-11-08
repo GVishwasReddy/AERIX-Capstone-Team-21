@@ -368,12 +368,13 @@ disk on every request, so front-end edits show without a restart.
 Four units live in `/etc/systemd/system/` on the Pi. Only
 [`scripts/aerix-payload.service`](../../scripts/aerix-payload.service) is kept
 in this repository; the other three are described from the project notes
-([docs/PROJECT_NOTES.md](../PROJECT_NOTES.md), section 4).
+([docs/PROJECT_NOTES.md](../PROJECT_NOTES.md), section 4) and the scripts they
+run. Cells marked "(on-Pi unit)" are not recorded in the repository.
 
 | Unit | Starts | Runs as | Owns | Restart |
 |---|---|---|---|---|
-| `aerix-gcs` | `.venv/bin/python -m drone_stack.gcs.server --config config/real.yaml`, `GCS_PORT=8090`, after `ExecStartPre=/bin/sleep 10` | `pi` | Pixhawk `/dev/ttyACM0`, LiDAR, TF02 UART, camera, Hailo NPU, port 8090 | `on-failure` |
-| `aerix-ble` | [`scripts/ble_handshake_start.sh`](../../scripts/ble_handshake_start.sh) then `drone_ble_peripheral.py` from the BLE venv | `root` | on-board Bluetooth controller, `/run/aerix-ble` | `always` |
+| `aerix-gcs` | `.venv/bin/python -m drone_stack.gcs.server --config config/real.yaml`, `GCS_PORT=8090`, after `ExecStartPre=/bin/sleep 10` | `pi` | Pixhawk `/dev/ttyACM0`, LiDAR, TF02 UART, camera, Hailo NPU, port 8090 | (on-Pi unit) |
+| `aerix-ble` | [`scripts/ble_handshake_start.sh`](../../scripts/ble_handshake_start.sh) then `drone_ble_peripheral.py` from the BLE venv | `root` | on-board Bluetooth controller, `/run/aerix-ble` | `always` (the start script relies on it) |
 | `aerix-payload` | `drone_stack/payload/venv/bin/python -m drone_stack.payload.medbox_bridge`, `Nice=5` | `pi` | USB Bluetooth dongle only | `always`, `RestartSec=5` |
 | `aerix-panel` | `~/front_panel/venv` running `panel.py` | `pi` | OLED (I2C), three buttons, buzzer | (on-Pi unit) |
 
@@ -528,7 +529,7 @@ source, never delete on the Pi, back up what gets overwritten.**
 | Stop `aerix-gcs` and `aerix-ble` | no | yes |
 | Copy with `rsync -av --checksum` (no `--delete`) | no | yes |
 | `pip install` into the BLE venv and the main `.venv` | no | yes |
-| Run `pytest -q` on the Pi | no | yes |
+| Run `pytest -q` on the Pi (last 3 lines shown; a failure does **not** stop the script) | no | yes |
 | Start `aerix-ble` and `aerix-gcs`, wait 15 s, show status and BLE log lines | no | yes |
 
 ```mermaid
@@ -545,9 +546,9 @@ flowchart TD
     H --> I["pip install BLE venv and main .venv"]
     I --> J["pytest -q on the Pi"]
     J --> K["Start aerix-ble and aerix-gcs"]
-    K --> L{"Both active, no Traceback?"}
+    K --> L{"Operator check: tests pass,<br/>both active, no Traceback?"}
     L -- "yes" --> M["Done. Restart aerix-payload or aerix-panel by hand if changed"]
-    L -- "no" --> N["Roll back: rsync the backup over DEST and restart"]
+    L -- "no" --> N["Roll back by hand: rsync the backup over DEST and restart"]
 ```
 
 ### 11.2 What is never sent and never deleted
@@ -560,7 +561,7 @@ flowchart TD
 | Firebase secrets and state | `config/firebase-service-account.json`, `config/pending_order.json` |
 | Delivery identity and ledger | `drone_stack/ble_handshake/keys/`, `drone_stack/ble_handshake/receipts/`, `drone_stack/ble_handshake/active_order*.json` |
 | Runtime output | `logs/`, `recordings/`, `hailort.log` |
-| Local scratch and backups | editor snapshot patterns (`*.predeploy_*`, `*.preyaw_*`, `*.bw_*` and similar), `err.txt`, local tooling folders |
+| Local scratch and backups | snapshot patterns `*.predeploy_*`, `*.preyaw_*`, `*.bw_*`, backup folders `.*_backup_*/`, `err.txt`, local tooling folders |
 
 Losing `ble_handshake/keys/` (the drone's Ed25519 receipt-signing key) or
 `receipts/` (the hash-chained ledger) is unrecoverable, which is why the
@@ -568,6 +569,8 @@ script never uses `rsync --delete`.
 
 ### 11.3 After a deploy
 
+- Check the pytest summary the script printed; it carries on even if tests
+  failed.
 - The script restarts only `aerix-gcs` and `aerix-ble`. If you changed
   `drone_stack/payload/` or the panel, restart those by hand:
   `sudo systemctl restart aerix-payload aerix-panel`.
@@ -597,10 +600,11 @@ pytest -q tests/novelty                  # design-tier novelty layer only
 ```
 
 On the Pi, run it from the main venv: `.venv/bin/python -m pytest -q`. The
-last recorded full run in the project notes is **1147 passed** (Python 3.11,
-2026-10-08, inside a stand-in deployed copy;
-[docs/DEPLOY_2026-10-08.md](../DEPLOY_2026-10-08.md)). Quote a pass count only
-together with its date.
+recorded full runs are from 2026-10-08: **1147 passed** (Python 3.11, inside a
+stand-in deployed copy; [docs/DEPLOY_2026-10-08.md](../DEPLOY_2026-10-08.md))
+and **1149 passed, 1 skipped** (Python 3.13 and 3.11;
+[evidence/EVIDENCE_TIERS.md](../../evidence/EVIDENCE_TIERS.md)). Neither was
+run on the Pi itself. Quote a pass count only together with its date.
 
 ### 12.1 Test flow
 
@@ -657,9 +661,11 @@ library is missing:
 
 | Library | Tests that need it | Where it is installed |
 |---|---|---|
-| `bluez_peripheral` | `test_attack_table`, `test_ble_session`, `test_ble_ground_release`, `test_ble_release_ledger`, part of `test_order_store` | BLE venv / Linux with BlueZ |
-| `cryptography` | `test_attack_table`, `test_ble_release_ledger`, `test_order_store` | BLE venv |
-| `cv2` (OpenCV) | parts of `test_flight_end`, `test_person_lock_stab` | Pi image |
+| `bluez_peripheral` | `test_attack_table`, `test_ble_session`, `test_ble_ground_release`, `test_ble_release_ledger`, `test_protocol_vectors`, part of `test_order_store` and `test_phone_pick_config` | BLE venv / Linux with BlueZ |
+| `cryptography` | `test_attack_table`, `test_ble_release_ledger`, `test_order_store`, `test_receipt_ledger` | BLE venv |
+| `cv2` (OpenCV) | `test_flight_end`, `test_person_lock_stab`, `test_rs_stabilizer` | Pi image |
+| `libcamera` | one test in `test_rs_stabilizer` | Pi image |
+| `bleak` | one test in `test_medbox` | MedBox bridge venv |
 
 On a laptop, check the `-ra` summary at the end of the run to see which were
 skipped.
@@ -667,9 +673,11 @@ skipped.
 ### 12.4 Tests never touch the aircraft's live data
 
 [`tests/conftest.py`](../../tests/conftest.py) has autouse fixtures that
-redirect the recordings directory and the delivery ledger and key to temporary
-folders through `DRONE_<SECTION>_<KEY>` overrides. This exists because a test
-run on the Pi once interfered with a live recording render. It is enforced by
+redirect the recordings directory (`DRONE_RECORDING_DIR`), the delivery ledger
+and key (`AERIX_RECEIPT_DIR`, `AERIX_RECEIPT_KEY`) and the order and
+spent-marker folders (`AERIX_ORDER_DIR`, `AERIX_SPENT_DIR`) to temporary
+folders. This exists because a test run on the Pi on 2026-09-23 deleted a live
+recording render's files. It is enforced by
 [`test_recordings_isolated.py`](../../tests/test_recordings_isolated.py), so
 running `pytest` on the aircraft is safe.
 
@@ -735,7 +743,7 @@ Each one reads back what it wrote.
 
 | Script | Purpose |
 |---|---|
-| [`dronectl.py`](../../scripts/dronectl.py) | tiny CLI over the HTTP API (default `http://127.0.0.1:8090`) |
+| [`dronectl.py`](../../scripts/dronectl.py) | tiny CLI over the legacy Flask dashboard's `/api/service` (headless stack, section 5.3; default `127.0.0.1:8090`). The GCS server does not expose that route. |
 | [`inject_order.py`](../../scripts/inject_order.py) | inject a test delivery order through `delivery_inject` |
 | [`servo_calibrate.py`](../../scripts/servo_calibrate.py) | interactive, step-by-step servo limit finding through the GCS API |
 | [`lidar_orientation_check.py`](../../scripts/lidar_orientation_check.py) | physical left/right check of the LiDAR from the `/ws` feed |
