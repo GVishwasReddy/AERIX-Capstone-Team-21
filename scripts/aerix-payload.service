@@ -1,0 +1,30 @@
+# MedBox bridge: installed as /etc/systemd/system/aerix-payload.service.
+#
+# Runs as pi, not root: BlueZ's D-Bus policy (context="default") lets any
+# user drive org.bluez as a central, and this service needs nothing else.
+# It only ever touches the USB Bluetooth dongle - the on-board controller is
+# the delivery handshake's (aerix-ble.service) - and it stays off the air
+# unless the GCS payload kind is "medbox". See drone_stack/payload/medbox_bridge.py.
+#
+# Its venv (bleak) is separate from the GCS .venv on purpose:
+#   python3 -m venv drone_stack/payload/venv && drone_stack/payload/venv/bin/pip install bleak
+[Unit]
+Description=AERIX smart-payload bridge (MedBox over BLE, USB dongle only)
+After=bluetooth.service aerix-gcs.service
+Wants=bluetooth.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/drone_stack
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/pi/drone_stack
+ExecStart=/home/pi/drone_stack/drone_stack/payload/venv/bin/python -m drone_stack.payload.medbox_bridge
+Restart=always
+RestartSec=5
+# Below the handshake and the GCS for CPU: this one is advisory.
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

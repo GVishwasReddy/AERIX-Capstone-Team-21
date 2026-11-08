@@ -1,0 +1,324 @@
+"""ObstacleNode - Phase 5.
+
+Turns a raw :class:`~drone_stack.msg.LaserScan` into a list of classified
+:class:`~drone_stack.msg.Obstacle` objects with distance and relative bearing.
+
+Pipeline:
+    1. Convert beams to Cartesian points (sensor/body frame, x forward, y left).
+    2. Cluster angularly-adjacent returns whose range gap is small (handling the
+       0/360 wrap-around).
+    3. For each cluster estimate width (chord), radial depth and linearity.
+    4. Classify (wall / building / vehicle / pole / person / tree) from those
+       geometric features against configurable thresholds.
+
+Bearing convention: 0 deg = straight ahead, positive to the right, range
+[-180, 180].
+"""
+from __future__ import annotations
+
+import math
+import threading
+import time
+from dataclasses import replace
+
+from drone_stack.bus import MessageBus
+from drone_stack.bus.topics import Topics
+from drone_stack.msg import (
+    FusedState,
+    LaserScan,
+    Obstacle,
+    ObstacleArray,
+    ObstacleClass,
+)
+from drone_stack.nodes.obstacle_tracker import ObstacleTracker
+from drone_stack.utils.config import Config
+from drone_stack.utils.geometry import polar_to_cartesian, wrap_180, wrap_pi
+from drone_stack.utils.node import NodeBase
+
+
+class _Cluster:
+    __slots__ = ("indices", "points", "ranges", "angles")
+
+    def __init__(self) -> None:
+        self.indices: list[int] = []
+        self.points: list[tuple[float, float]] = []
+        self.ranges: list[float] = []
+        self.angles: list[float] = []
+
+    def add(self, idx: int, rng: float, angle: float) -> None:
+        self.indices.append(idx)
+        self.ranges.append(rng)
+        self.angles.append(angle)
+        self.points.append(polar_to_cartesian(rng, angle))
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+
+class ObstacleNode(NodeBase):
+    """Detects and classifies obstacles from LaserScans."""
+
+    def __init__(self, bus: MessageBus, config: Config) -> None:
+        section = config.section("obstacles")
+        super().__init__("obstacles", bus, config, rate_hz=section.get("rate_hz", 10))
+        self._gap = float(section.get("cluster_gap_m", 0.30))
+        self._min_points = int(section.get("min_points", 3))
+        # Range-aware size gate (2026-09-23). A fixed ``min_points`` is an
+        # ANGULAR threshold in disguise: at 1 deg per bin, 3 points is 3 deg,
+        # which a 0.3 m pole only fills inside ~5.7 m and a 0.1 m one inside
+        # ~1.9 m. Flight logs showed poles already in the scan 4-5 m out as
+        # 1-2 point clusters, rejected here, and first published at ~2.2 m -
+        # the "it almost hits it" report. The requirement now shrinks with
+        # range to what an object ``min_object_width_m`` wide can physically
+        # fill, and a cluster below ``min_points`` must then persist for
+        # ``sparse_min_hits`` revolutions before it is published, so one
+        # speckle cannot swerve the aircraft.
+        self._min_width = float(section.get("min_object_width_m", 0.10))
+        self._sparse_min_hits = int(section.get("sparse_min_hits", 3))
+        # Coasting (2026-09-23, "no confused guidance"). A confirmed obstacle
+        # that misses a revolution - routine for a 1-2 point return at range -
+        # used to vanish from /obstacles for that revolution, flipping the
+        # avoider SLOW -> CLEAR -> SLOW and the course bend -> release -> bend.
+        # The tracker already keeps the track alive through max_misses; this
+        # keeps *publishing* it, predicted forward on its measured body-frame
+        # velocity, for up to ``coast_s``. Only ever re-states an obstacle that
+        # was confirmed; never invents one.
+        self._coast_s = float(section.get("coast_s", 0.35))
+        self._confirmed_last: dict[int, tuple[Obstacle, float]] = {}
+        self._danger = float(section.get("danger_distance_m", 2.0))
+        self._person_range = tuple(section.get("person_width_range_m", [0.25, 0.80]))
+        self._pole_max = float(section.get("pole_width_max_m", 0.35))
+        self._vehicle_range = tuple(section.get("vehicle_width_range_m", [1.20, 4.00]))
+        self._wall_min = float(section.get("wall_min_length_m", 2.50))
+
+        # Frame-to-frame tracking. Without it an obstacle's identity is its
+        # index in a distance-sorted list, so nothing downstream can tell that
+        # the cluster 2 m ahead is the one that was 3 m ahead a tenth of a
+        # second ago - which is why avoidance only ever saw static objects.
+        tracking = section.get("tracking", {}) or {}
+        self._tracking_enabled = bool(tracking.get("enabled", True))
+        self._tracker = ObstacleTracker(
+            gate_m=float(tracking.get("gate_m", 1.2)),
+            max_misses=int(tracking.get("max_misses", 3)),
+            min_hits=int(tracking.get("min_hits", 2)),
+            alpha=float(tracking.get("alpha", 0.5)),
+            dynamic_speed_ms=float(tracking.get("dynamic_speed_ms", 0.5)),
+            dynamic_min_hits=int(tracking.get("dynamic_min_hits", 3)),
+            max_speed_ms=float(tracking.get("max_speed_ms", 6.0)),
+        )
+
+        self._latest_scan: LaserScan | None = None
+        # The last scan actually processed. This node may poll faster than the
+        # LiDAR revolves; re-running the tracker on the same revolution would
+        # count one sighting as several hits (defeating ``sparse_min_hits``)
+        # and differentiate zero motion across a fake dt.
+        self._processed_scan: LaserScan | None = None
+        self._fused: FusedState | None = None
+        self._lock = threading.Lock()
+        self.subscribe(Topics.SCAN, self._on_scan)
+        # Ego-motion, so a wall we are flying past is not reported as a wall
+        # flying past us. Translation AND yaw rate both matter here.
+        self.subscribe(Topics.FUSED_STATE, self._on_fused)
+
+    def _on_scan(self, msg) -> None:
+        if isinstance(msg, LaserScan):
+            with self._lock:
+                self._latest_scan = msg
+
+    def _on_fused(self, msg) -> None:
+        if isinstance(msg, FusedState):
+            with self._lock:
+                self._fused = msg
+
+    def step(self) -> None:
+        with self._lock:
+            scan = self._latest_scan
+            ego = self._fused
+        if scan is None or scan.count == 0 or scan is self._processed_scan:
+            return
+        self._processed_scan = scan
+        obstacles = self._detect(scan)
+        if self._tracking_enabled:
+            # Tracked *before* publishing, so every consumer sees the same
+            # velocities rather than each deriving its own. Sparse candidates
+            # go through the tracker too - that is how they earn their hits.
+            now = time.monotonic()
+            obstacles = self._tracker.update(obstacles, now, ego)
+            obstacles = [o for o in obstacles if self._confirmed(o)]
+            obstacles = self._with_coasted(obstacles, now)
+        else:
+            obstacles = [o for o in obstacles if self._confirmed(o)]
+        self.publish(
+            Topics.OBSTACLES,
+            ObstacleArray(frame_id="base_link", obstacles=obstacles),
+        )
+
+    # -- detection -----------------------------------------------------------
+    def _detect(self, scan: LaserScan) -> list[Obstacle]:
+        """Candidate obstacles: every cluster big enough for its range.
+
+        Candidates below ``min_points`` are *sparse*; ``_confirmed`` decides
+        whether they are published once the tracker has seen them.
+        """
+        clusters = self._cluster(scan)
+        obstacles: list[Obstacle] = []
+        for i, cluster in enumerate(clusters):
+            nearest = min(cluster.ranges)
+            if len(cluster) < self._required_points(nearest, scan.angle_increment):
+                continue
+            obstacles.append(self._describe(i, cluster))
+        obstacles.sort(key=lambda o: o.distance_m)
+        return obstacles
+
+    def _required_points(self, distance: float, bin_rad: float) -> int:
+        """Beams an object ``min_object_width_m`` wide fills at ``distance``.
+
+        Rounded DOWN (a 1.9 deg object can land in one 1 deg bin), floored at
+        1 and capped at ``min_points`` so close in, the old rule is unchanged.
+        """
+        if distance <= 0.0 or bin_rad <= 0.0:
+            return self._min_points
+        subtended = 2.0 * math.atan(self._min_width / (2.0 * distance))
+        return max(1, min(self._min_points, int(subtended / bin_rad)))
+
+    def _with_coasted(self, seen: list[Obstacle], now: float) -> list[Obstacle]:
+        """Add confirmed tracks missing from this revolution, predicted forward."""
+        for o in seen:
+            self._confirmed_last[o.track_id] = (o, now)
+        live = {t.id: t for t in self._tracker.tracks}
+        present = {o.track_id for o in seen}
+        out = list(seen)
+        for track_id, (last, stamp) in list(self._confirmed_last.items()):
+            age = now - stamp
+            track = live.get(track_id)
+            if track is None or age > self._coast_s:
+                del self._confirmed_last[track_id]
+                continue
+            if track_id in present:
+                continue
+            # vx_b/vy_b is the MEASURED body-frame velocity, ego-motion
+            # included - exactly what moves a static pole towards the nose
+            # while we fly at it, so the prediction closes, not freezes.
+            x = last.x_m + track.vx_b * age
+            y = last.y_m + track.vy_b * age
+            distance = math.hypot(x, y)
+            out.append(replace(
+                last,
+                x_m=round(x, 3),
+                y_m=round(y, 3),
+                distance_m=round(distance, 3),
+                bearing_deg=round(wrap_180(-math.degrees(math.atan2(y, x))), 2),
+                danger=distance <= self._danger,
+            ))
+        out.sort(key=lambda o: o.distance_m)
+        return out
+
+    def _confirmed(self, obstacle: Obstacle) -> bool:
+        """Dense clusters publish at once; sparse ones must persist."""
+        if obstacle.num_points >= self._min_points:
+            return True
+        # Without the tracker a sparse cluster cannot prove persistence.
+        return self._tracking_enabled and obstacle.hits >= self._sparse_min_hits
+
+    def _cluster(self, scan: LaserScan) -> list[_Cluster]:
+        clusters: list[_Cluster] = []
+        current = _Cluster()
+        prev_range: float | None = None
+        angle = scan.angle_min
+        inc = scan.angle_increment
+        for idx, rng in enumerate(scan.ranges):
+            a = angle
+            angle += inc
+            if not math.isfinite(rng):
+                if len(current):
+                    clusters.append(current)
+                    current = _Cluster()
+                prev_range = None
+                continue
+            if prev_range is not None and abs(rng - prev_range) > self._gap:
+                if len(current):
+                    clusters.append(current)
+                current = _Cluster()
+            current.add(idx, rng, a)
+            prev_range = rng
+        if len(current):
+            clusters.append(current)
+
+        # Merge wrap-around: first and last clusters are physically adjacent.
+        if len(clusters) >= 2:
+            first, last = clusters[0], clusters[-1]
+            if (
+                first.indices
+                and last.indices
+                and last.indices[-1] == len(scan.ranges) - 1
+                and first.indices[0] == 0
+                and abs(first.ranges[0] - last.ranges[-1]) <= self._gap
+            ):
+                merged = _Cluster()
+                for c in (last, first):
+                    for idx, rng, ang in zip(c.indices, c.ranges, c.angles):
+                        merged.add(idx, rng, ang)
+                clusters = [merged] + clusters[1:-1]
+        return clusters
+
+    def _describe(self, obstacle_id: int, cluster: _Cluster) -> Obstacle:
+        nearest_i = min(range(len(cluster)), key=lambda i: cluster.ranges[i])
+        distance = cluster.ranges[nearest_i]
+        nx, ny = cluster.points[nearest_i]
+
+        # Chord width between the two extreme points of the cluster.
+        (x0, y0), (x1, y1) = cluster.points[0], cluster.points[-1]
+        width = math.hypot(x1 - x0, y1 - y0)
+        radial_depth = max(cluster.ranges) - min(cluster.ranges)
+        # Summed step by step, not last-minus-first: a cluster merged across
+        # the 0/360 seam - i.e. anything straight ahead, since beam 0 is the
+        # nose - runs 359 deg -> 1 deg, and last-minus-first read that as
+        # 358 deg wide. NavigationNode's VFH+ histogram then blocked the whole
+        # window, found no gap anywhere, and the aircraft flew straight at the
+        # obstacle into the brake instead of steering round it (2026-09-23).
+        angular_width = math.degrees(sum(
+            abs(wrap_pi(b - a)) for a, b in zip(cluster.angles, cluster.angles[1:])))
+
+        # Circular mean bearing of the cluster (handles the 359/0 wrap so an
+        # obstacle straight ahead is not reported off to the side).
+        sin_sum = sum(math.sin(a) for a in cluster.angles)
+        cos_sum = sum(math.cos(a) for a in cluster.angles)
+        mean_angle = math.atan2(sin_sum, cos_sum)
+        bearing = wrap_180(-math.degrees(mean_angle))
+
+        classification, confidence = self._classify(width, radial_depth, len(cluster))
+        return Obstacle(
+            id=obstacle_id,
+            distance_m=round(distance, 3),
+            bearing_deg=round(bearing, 2),
+            angular_width_deg=round(angular_width, 2),
+            width_m=round(width, 3),
+            x_m=round(nx, 3),
+            y_m=round(ny, 3),
+            classification=classification,
+            confidence=round(confidence, 2),
+            danger=distance <= self._danger,
+            num_points=len(cluster),
+        )
+
+    def _classify(
+        self, width: float, radial_depth: float, points: int
+    ) -> tuple[ObstacleClass, float]:
+        """Heuristic classification from geometric features."""
+        linear = radial_depth < 0.5  # a flat, wall-like surface
+
+        if width >= 2.0 * self._wall_min and linear:
+            return ObstacleClass.BUILDING, 0.8
+        if width >= self._wall_min and linear:
+            return ObstacleClass.WALL, 0.85
+        if self._vehicle_range[0] <= width <= self._vehicle_range[1]:
+            return ObstacleClass.VEHICLE, 0.7
+        if width <= self._pole_max:
+            return ObstacleClass.POLE, 0.75
+        if self._person_range[0] <= width <= self._person_range[1]:
+            # People are compact with some depth (not a flat surface).
+            confidence = 0.7 if not linear else 0.5
+            return ObstacleClass.PERSON, confidence
+        if width <= self._vehicle_range[0]:
+            return ObstacleClass.TREE, 0.6
+        return ObstacleClass.UNKNOWN, 0.4

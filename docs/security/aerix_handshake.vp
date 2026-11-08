@@ -1,0 +1,86 @@
+// AERIX last-metre release handshake (protocol v1 + RESULT_SIGNED), Verifpal.
+//
+// Machine-checked counterpart of docs/security/aerix_handshake.pv (ProVerif),
+// written 2026-10-08 because ProVerif could not be installed in the cloud
+// session; Verifpal could. Run:   verifpal verify docs/security/aerix_handshake.vp
+// Result and date: docs/security/THREAT_MODEL.md section 7.
+//
+// Mapping to drone_stack/ble_handshake/drone_ble_peripheral.py:
+//   NONCE  read                       nonce
+//   AUTH   HMAC(token, nonce)          MAC(token, nonce)
+//   ACK    HMAC(token, nonce||"ACK")   MAC(token, CONCAT(nonce, tag_ack))
+//   GPS    pos || HMAC(token, nonce||pos)
+//   DROP   HMAC(token, nonce||pos||"DROP")
+//   RESULT_SIGNED  code || HMAC(token, nonce||"RESULT"||code)
+// Same abstractions as the .pv header (A1-A5): explicit tags stand in for the
+// coordinate parser (pinned by tests/test_attack_table.py::test_T17), MACs are
+// ideal, the geofence and the person lock are physical/mission state.
+
+attacker[active]
+
+principal Drone[
+    knows private token
+    knows public tag_ack
+    knows public tag_drop
+    knows public tag_result
+    knows public released
+    generates nonce
+]
+
+principal Phone[
+    knows private token
+    knows public tag_ack
+    knows public tag_drop
+    knows public tag_result
+    knows public released
+    knows private pos
+]
+
+Drone -> Phone: nonce
+
+principal Phone[
+    auth = MAC(token, nonce)
+]
+
+Phone -> Drone: auth
+
+principal Drone[
+    _ = ASSERT(MAC(token, nonce), auth)?
+    ack = MAC(token, CONCAT(nonce, tag_ack))
+]
+
+Drone -> Phone: ack
+
+principal Phone[
+    _ = ASSERT(MAC(token, CONCAT(nonce, tag_ack)), ack)?
+    gps_sig = MAC(token, CONCAT(nonce, pos))
+    drop = MAC(token, CONCAT(nonce, pos, tag_drop))
+]
+
+Phone -> Drone: pos, gps_sig, drop
+
+principal Drone[
+    _ = ASSERT(MAC(token, CONCAT(nonce, pos)), gps_sig)?
+    _ = ASSERT(MAC(token, CONCAT(nonce, pos, tag_drop)), drop)?
+    result_tag = MAC(token, CONCAT(nonce, tag_result, released))
+]
+
+Drone -> Phone: result_tag
+
+principal Phone[
+    _ = ASSERT(MAC(token, CONCAT(nonce, tag_result, released)), result_tag)?
+]
+
+queries[
+    // Q1 the token never leaks over BLE
+    confidentiality? token
+    // Q2 the drone releases only on the recipient's own DROP and position
+    authentication? Phone -> Drone: drop
+    authentication? Phone -> Drone: gps_sig
+    // Q3 the phone only trusts a token-holding drone
+    authentication? Drone -> Phone: ack
+    // Q5 the phone only believes "released" when the drone said so
+    authentication? Drone -> Phone: result_tag
+    // replay: the challenge is fresh per session
+    freshness? nonce
+]

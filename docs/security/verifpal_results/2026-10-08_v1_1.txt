@@ -1,0 +1,41 @@
+Verifpal 1.6.4 - https://verifpal.com
+ Verifpal * Verification initiated for 'aerix_handshake_v1_1.vp' at 06:39:28 AM.
+     Info . Analyzing 2 parallel sessions per principal; per-session values and principals are suffixed #2.
+     Info . Attacker is configured as active.
+     Info . authentication? Drone -> Phone: ack reports a duplicate that Phone cannot rule out on its own: it contributes nothing to ack before accepting it, so any run of it takes the same message twice. Read it as a replay-protection question about this flight rather than as a forgery.
+     FAIL x authentication? Drone -> Phone: ack (Analysis 107)
+     FAIL x freshness? nonce (Analysis 108)
+     Info . authentication? Drone -> Phone: result_tag reports a duplicate that Phone cannot rule out on its own: it contributes nothing to result_tag before accepting it, so any run of it takes the same message twice. Read it as a replay-protection question about this flight rather than as a forgery.
+     FAIL x authentication? Drone -> Phone: result_tag (Analysis 1018)
+
+--------------------------------------------------
+ Verifpal * Verification completed for 'aerix_handshake_v1_1.vp' at 06:39:28 AM in 155ms.
+
+     PASS + confidentiality? token  [search exhausted at 2 sessions]
+     PASS + authentication? Phone -> Drone: drop  [search exhausted at 2 sessions]
+     PASS + authentication? Phone -> Drone: gps_sig  [search exhausted at 2 sessions]
+     FAIL x authentication? Drone -> Phone: ack  [duplicate acceptance: no recipient-generated context]
+            Attack trace:
+            | 1. Attacker replays nonce#2 (Drone#2 to Phone#2) from another session, where it is nonce.
+            | 2. Attacker replays ack#2 (Drone#2 to Phone#2) from another session, where it is MAC(token, CONCAT(nonce, tag_ack)).
+            | 3. Phone#2's ASSERT(MAC(token, CONCAT(nonce, tag_ack)), MAC(token, CONCAT(nonce, tag_ack)))? passes — the attacker controls one of its inputs.
+            > ack#2 (MAC(token, CONCAT(nonce, tag_ack))), which Drone sent in another session and not in this one, is successfully used in ASSERT(MAC(token, CONCAT(nonce#2, tag_ack)), ack#2)? within Phone#2's state: Drone sent it once, Phone accepts it twice, so agreement is not injective.
+     FAIL x authentication? Drone -> Phone: result_tag  [duplicate acceptance: no recipient-generated context]
+            Attack trace:
+            | 1. Attacker replays nonce (Drone to Phone) from another session, where it is nonce#2.
+            | 2. Attacker replays ack (Drone to Phone) from another session, where it is MAC(token, CONCAT(nonce#2, tag_ack)).
+            | 3. Phone's ASSERT(MAC(token, CONCAT(nonce#2, tag_ack)), MAC(token, CONCAT(nonce#2, tag_ack)))? passes — the attacker controls one of its inputs.
+            | 4. Attacker replays result_tag (Drone to Phone) from another session, where it is MAC(token, CONCAT(nonce#2, tag_result, released)).
+            | 5. Phone's ASSERT(MAC(token, CONCAT(nonce#2, tag_result, released)), MAC(token, CONCAT(nonce#2, tag_result, released)))? passes — the attacker controls one of its inputs.
+            > result_tag (MAC(token, CONCAT(nonce#2, tag_result, released))), which Drone sent in another session and not in this one, is successfully used in ASSERT(MAC(token, CONCAT(nonce, tag_result, released)), result_tag)? within Phone's state: Drone sent it once, Phone accepts it twice, so agreement is not injective.
+     FAIL x freshness? nonce
+            Attack trace:
+            | 1. Attacker replays nonce#2 (Drone#2 to Phone#2) from another session, where it is nonce.
+            | 2. Attacker replays ack#2 (Drone#2 to Phone#2) from another session, where it is MAC(token, CONCAT(nonce, tag_ack)).
+            | 3. Phone#2's ASSERT(MAC(token, CONCAT(nonce, tag_ack)), MAC(token, CONCAT(nonce, tag_ack)))? passes — the attacker controls one of its inputs.
+            | 4. Attacker replaces result_tag#2 (sent by Drone#2 to Phone#2) with nil. (result_tag#2 was MAC(token, CONCAT(nonce#2, tag_result, released)))
+            > nonce#2 (nonce) is used by Phone#2 in MAC(token, CONCAT(nonce#2, tag_auth)), and Phone accepts the same value: the attacker keeps it the same across sessions, so it is not fresh.
+
+--------------------------------------------------
+     FAIL x 3 of 6 queries failed.
+ Verifpal * Thank you for using Verifpal.

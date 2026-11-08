@@ -1,0 +1,130 @@
+# Pre-registered experiments - the pass lines are fixed HERE, BEFORE any trial.
+#
+# Evidence review 2026-10-08: "The pass lines are my proposals, not standards;
+# change them, but fix them before you run, not after." This file is the one
+# place they live. `scripts/trial_log.py freeze` records its sha256 in
+# evidence/PREREGISTERED.txt; every trial row carries the hash it was logged
+# under, and `report` flags any pass line that moved after data came in.
+#
+# Edit freely until the first trial of an experiment is logged. After that,
+# a change is a NEW protocol version: bump `version`, freeze again, and say
+# why in the commit message.
+#
+# Check kinds (scripts/trial_log.py):
+#   rate     share of rows where <column> == <equals>; min/max; per_group
+#   ratio    sum(<num>) / sum(<den>); min/max
+#   count    rows where <column> == <equals>; max
+#   value    every numeric <column> within min (smallest) / max (largest)
+#   curve    rate of <column> == <equals> per group - reported, no pass line
+# Every check also needs at least `min_n` rows (per group if per_group;
+# only_group restricts a check to one group).
+
+version: 1
+
+experiments:
+  exp1:
+    title: Attack tests on the bench (props off)
+    turns_into: the "fails closed" claim, and the 27 Sep fix
+    group: attack            # T-id from docs/security/THREAT_MODEL.md
+    columns: [attack, code, servo_moved, token_kept, refused_ok]
+    how: >
+      Real phone and Pi, props off. Play each attack from THREAT_MODEL.md
+      (replayed DROP, stale nonce, wrong order token, wrong phone, DROP while
+      disarmed, DROP during a pilot takeover). refused_ok=yes only if the
+      named code is right AND the servo did not move AND the token survived.
+    checks:
+      - {kind: rate, column: refused_ok, equals: "yes", min: 1.0, min_n: 3, per_group: true}
+      - {kind: count, column: servo_moved, equals: "yes", max: 0}
+
+  exp2:
+    title: Token capture from a card image
+    turns_into: the captured-drone gap against SecAuthUAV (T19/T20)
+    group: layout            # before_fix | after_fix
+    columns: [layout, image, hits]
+    how: >
+      Pull an order, stop the services, dd the card, run
+      scripts/token_capture_check.py <image> --token <hex from the console>.
+      Once on a pre-fix card (expect hits), once after (expect none).
+    checks:
+      - {kind: value, column: hits, max: 0, only_group: after_fix, min_n: 1}
+
+  exp3:
+    title: Geofence curve - phone held at a measured distance in open sky
+    turns_into: whether a 12 m geofence means anything next to GPS noise
+    group: distance_m        # 0 3 6 9 12 15 18
+    columns: [distance_m, accepted, reported_m]
+    how: >
+      Tape-measured distance from the point under the hovering (or
+      tripod-mounted) drone. 20 handshakes per distance. accepted = the phone
+      read GEOFENCE_OK. reported_m from the peripheral log line.
+    checks:
+      - {kind: curve, column: accepted, equals: "yes", min_n: 20}
+      # Choose the threshold FROM the curve: the smallest radius whose accept
+      # rate at the recipient's own position (0-3 m) is >= 95%.
+      - {kind: rate, column: accepted, equals: "yes", min: 0.95, min_n: 20, only_group: "0"}
+      - {kind: rate, column: accepted, equals: "yes", min: 0.95, min_n: 20, only_group: "3"}
+
+  exp4:
+    title: Person detection in flight at 4 m
+    turns_into: replaces the 64.4% offline recall figure
+    group: person_size       # small | medium | large (box height in px bands)
+    columns: [person_size, people_present, people_detected, false_lock]
+    how: >
+      At least 30 passes over the drop point, different people, clothes and
+      light. One row per pass and size band.
+    checks:
+      - {kind: ratio, num: people_detected, den: people_present, min: 0.90, min_n: 30}
+      - {kind: rate, column: false_lock, equals: "yes", max: 0.10, min_n: 30}
+
+  exp5:
+    title: Full handover, one person, 10 runs per ending
+    turns_into: the last-metre claim itself
+    group: ending            # no_person | lock_no_handshake | full_handshake
+    columns: [ending, correct_ending, released, lock_to_release_s, release_agl_m, parcel_to_person_m]
+    how: >
+      Tethered first, then open field. correct_ending=yes when the aircraft
+      did what the ending demands (returned with the parcel, or released).
+      released=yes on any ending is recorded; on the two no-release endings
+      it is a failure.
+    checks:
+      - {kind: rate, column: correct_ending, equals: "yes", min: 1.0, min_n: 10, per_group: true}
+      - {kind: count, column: released, equals: "yes", max: 0, only_group: no_person}
+      - {kind: count, column: released, equals: "yes", max: 0, only_group: lock_no_handshake}
+
+  exp6:
+    title: Two or three people, one holding the phone
+    turns_into: the phone locator, now simulation only
+    group: people            # 2 | 3
+    columns: [people, pick]  # pick: right | wrong | declined
+    how: >
+      People 3 m apart under the drop point; only one has the app. The drone
+      should decline rather than guess. Compare against
+      scripts/sim_phone_pick.py (0.17-1.33% wrong in simulation).
+    checks:
+      - {kind: rate, column: pick, equals: wrong, max: 0.05, min_n: 20, per_group: true}
+
+  exp7:
+    title: One pole in open ground, pilot on the sticks
+    turns_into: avoidance, so far simulation only
+    group: approach          # head_on | oblique
+    columns: [approach, closest_m, pilot_intervened]
+    how: >
+      0.3 m pole, cruise band, 10 passes. closest_m from the LiDAR log.
+    checks:
+      - {kind: value, column: closest_m, min: 1.5, min_n: 10}
+      - {kind: count, column: pilot_intervened, equals: "yes", max: 0}
+
+  exp8:
+    title: Radio calibration - one phone at a marked spot
+    turns_into: replaces the literature radio values in sim_phone_pick.py with this aircraft's
+    group: session           # date or site label
+    columns: [session, samples, distance_ratio, path_loss_n, ref_dbm, rssi_sigma_db, shadow_sigma_db]
+    how: >
+      One person holds the phone at a tape-measured spot; nobody else with
+      Bluetooth nearby. Fly the scan orbit at 4 m, then passes at 2, 5, 8 and
+      12 m from the spot. Run scripts/fit_radio_model.py on that day's
+      logs/rssi CSV and log one row per session with its output.
+    checks:
+      # A fit is usable only if the distances spread enough to pin the slope.
+      - {kind: value, column: distance_ratio, min: 3.0, min_n: 1}
+      - {kind: value, column: samples, min: 400, min_n: 1}

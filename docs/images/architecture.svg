@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1200" height="880" viewBox="0 0 1200 880">
+  <title>AERIX system architecture</title>
+  <defs>
+    <style>
+      text { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0F172A; }
+      .h1 { font-size: 24px; font-weight: 700; }
+      .sub { font-size: 14px; fill: #475569; }
+      .name { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; fill: #475569; }
+      .lbl { font-size: 12px; font-weight: 600; fill: #334155; }
+      .sec { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; }
+      .ext { fill: #FFF7ED; stroke: #C2410C; stroke-width: 1.5; }
+      .sw { fill: #EFF6FF; stroke: #2563EB; stroke-width: 1.5; }
+      .hw { fill: #F0FDFA; stroke: #0F766E; stroke-width: 1.5; }
+      .opt { fill: #FFFFFF; stroke: #0F766E; stroke-width: 1.5; stroke-dasharray: 5 4; }
+      .wire { fill: none; stroke: #475569; stroke-width: 1.6; }
+      .tap { stroke: #93C5FD; stroke-width: 2; }
+      .pill { fill: #FFFFFF; stroke: #CBD5E1; stroke-width: 1; }
+    </style>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="880" fill="#F8FAFC"/>
+
+  <text x="40" y="44" class="h1">AERIX system architecture</text>
+  <text x="40" y="68" class="sub">Customer order in the cloud, flight and ground-control stack on the Raspberry Pi 5, flight control on the Pixhawk</text>
+
+  <!-- External row -->
+  <rect x="40" y="92" width="190" height="70" rx="10" class="ext"/>
+  <text x="135" y="122" text-anchor="middle" class="name">Customer app</text>
+  <text x="135" y="141" text-anchor="middle" class="small">places a delivery order</text>
+
+  <rect x="270" y="92" width="210" height="70" rx="10" class="ext"/>
+  <text x="375" y="122" text-anchor="middle" class="name">Firebase (Firestore)</text>
+  <text x="375" y="141" text-anchor="middle" class="small">orders + live status</text>
+
+  <rect x="720" y="92" width="210" height="70" rx="10" class="ext"/>
+  <text x="825" y="122" text-anchor="middle" class="name">Browser GCS</text>
+  <text x="825" y="141" text-anchor="middle" class="small">operator over Wi-Fi</text>
+
+  <rect x="960" y="92" width="200" height="70" rx="10" class="ext"/>
+  <text x="1060" y="122" text-anchor="middle" class="name">Recipient phone</text>
+  <text x="1060" y="141" text-anchor="middle" class="small">BLE handshake app</text>
+
+  <path d="M230,127 H266" class="wire" marker-end="url(#arr)"/>
+
+  <!-- Raspberry Pi container -->
+  <rect x="40" y="196" width="1120" height="404" rx="14" fill="#FFFFFF" stroke="#2563EB" stroke-width="2"/>
+  <text x="80" y="226" class="sec" fill="#1D4ED8" style="fill:#1D4ED8">RASPBERRY PI 5  ·  drone_stack  (aerix-gcs.service)</text>
+
+  <!-- GcsHub -->
+  <rect x="80" y="240" width="770" height="52" rx="10" class="sw"/>
+  <text x="465" y="262" text-anchor="middle" class="name">GcsHub  ·  FastAPI on :8090</text>
+  <text x="465" y="280" text-anchor="middle" class="small">REST + WebSocket, command dispatch, servo envelopes, /api/state</text>
+
+  <path d="M465,294 V318" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+
+  <!-- MessageBus -->
+  <rect x="80" y="320" width="770" height="30" rx="8" fill="#2563EB"/>
+  <text x="465" y="340" text-anchor="middle" class="name" style="fill:#FFFFFF">MessageBus  ·  in-process publish / subscribe</text>
+
+  <!-- bus taps (drawn behind node boxes) -->
+  <line x1="172" y1="350" x2="172" y2="530" class="tap"/>
+  <line x1="367" y1="350" x2="367" y2="530" class="tap"/>
+  <line x1="562" y1="350" x2="562" y2="530" class="tap"/>
+  <line x1="757" y1="350" x2="757" y2="460" class="tap"/>
+
+  <!-- Node grid -->
+  <g>
+    <rect x="80"  y="380" width="185" height="54" rx="9" class="sw"/>
+    <text x="172" y="403" text-anchor="middle" class="name">MavlinkNode</text>
+    <text x="172" y="421" text-anchor="middle" class="small">MAVLink to the Pixhawk</text>
+
+    <rect x="275" y="380" width="185" height="54" rx="9" class="sw"/>
+    <text x="367" y="403" text-anchor="middle" class="name">LidarNode</text>
+    <text x="367" y="421" text-anchor="middle" class="small">RPLIDAR scans + filter</text>
+
+    <rect x="470" y="380" width="185" height="54" rx="9" class="sw"/>
+    <text x="562" y="403" text-anchor="middle" class="name">RangefinderNode</text>
+    <text x="562" y="421" text-anchor="middle" class="small">TF02-Pro height AGL</text>
+
+    <rect x="665" y="380" width="185" height="54" rx="9" class="sw"/>
+    <text x="757" y="403" text-anchor="middle" class="name">CameraManager</text>
+    <text x="757" y="421" text-anchor="middle" class="small">+ Hailo person lock</text>
+
+    <rect x="80"  y="450" width="185" height="54" rx="9" class="sw"/>
+    <text x="172" y="473" text-anchor="middle" class="name">FusionNode</text>
+    <text x="172" y="491" text-anchor="middle" class="small">pose + sensor fusion</text>
+
+    <rect x="275" y="450" width="185" height="54" rx="9" class="sw"/>
+    <text x="367" y="473" text-anchor="middle" class="name">ObstacleNode</text>
+    <text x="367" y="491" text-anchor="middle" class="small">tracked obstacles</text>
+
+    <rect x="470" y="450" width="185" height="54" rx="9" class="sw"/>
+    <text x="562" y="473" text-anchor="middle" class="name">ProximityNode</text>
+    <text x="562" y="491" text-anchor="middle" class="small">OBSTACLE_DISTANCE to FC</text>
+
+    <rect x="665" y="450" width="185" height="54" rx="9" class="sw"/>
+    <text x="757" y="473" text-anchor="middle" class="name">NavigationNode</text>
+    <text x="757" y="491" text-anchor="middle" class="small">mission, avoidance, drop</text>
+
+    <rect x="80"  y="520" width="185" height="54" rx="9" class="sw"/>
+    <text x="172" y="543" text-anchor="middle" class="name">FirebaseDeliveryNode</text>
+    <text x="172" y="561" text-anchor="middle" class="small">orders to missions</text>
+
+    <rect x="275" y="520" width="185" height="54" rx="9" class="sw"/>
+    <text x="367" y="543" text-anchor="middle" class="name">DiagnosticsNode</text>
+    <text x="367" y="561" text-anchor="middle" class="small">health + preflight</text>
+
+    <rect x="470" y="520" width="185" height="54" rx="9" class="sw"/>
+    <text x="562" y="543" text-anchor="middle" class="name">FlightRecorder</text>
+    <text x="562" y="561" text-anchor="middle" class="small">per-flight logs</text>
+  </g>
+
+  <!-- Side services -->
+  <text x="890" y="226" class="sec" style="fill:#1D4ED8">SIDE SERVICES</text>
+  <rect x="890" y="240" width="240" height="56" rx="10" class="sw"/>
+  <text x="1010" y="263" text-anchor="middle" class="name">aerix-ble</text>
+  <text x="1010" y="282" text-anchor="middle" class="small">recipient BLE handshake</text>
+
+  <rect x="890" y="316" width="240" height="56" rx="10" class="sw"/>
+  <text x="1010" y="339" text-anchor="middle" class="name">aerix-payload</text>
+  <text x="1010" y="358" text-anchor="middle" class="small">MedBox bridge (USB dongle)</text>
+
+  <rect x="890" y="392" width="240" height="56" rx="10" class="sw"/>
+  <text x="1010" y="415" text-anchor="middle" class="name">aerix-panel</text>
+  <text x="1010" y="434" text-anchor="middle" class="small">OLED front panel + buttons</text>
+
+  <path d="M890,420 H870 V268" class="wire"/>
+  <path d="M890,344 H870" class="wire"/>
+  <path d="M890,268 H854" class="wire" marker-end="url(#arr)"/>
+  <text x="890" y="472" class="small">All three talk to GcsHub</text>
+  <text x="890" y="489" class="small">over HTTP on localhost:8090</text>
+
+  <!-- External links into the Pi -->
+  <path d="M300,164 V178 H58 V547 H76" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="312" y="182" class="lbl">orders in, delivery status out</text>
+
+  <path d="M825,164 V236" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="833" y="185" class="lbl">HTTP / WebSocket</text>
+
+  <path d="M1060,164 V236" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="1068" y="185" class="lbl">BLE</text>
+
+  <!-- Hardware row -->
+  <text x="42" y="668" class="sec" style="fill:#0F766E">HARDWARE</text>
+
+  <g>
+    <rect x="42"   y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="99"   y="709" text-anchor="middle" class="name">Servos</text>
+    <text x="99"   y="728" text-anchor="middle" class="small">MG995 · MG90S</text>
+
+    <rect x="167"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="224"  y="709" text-anchor="middle" class="name">Pixhawk</text>
+    <text x="224"  y="728" text-anchor="middle" class="small">ArduPilot FC</text>
+
+    <rect x="292"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="349"  y="709" text-anchor="middle" class="name">RPLIDAR C1</text>
+    <text x="349"  y="728" text-anchor="middle" class="small">360° 2D LiDAR</text>
+
+    <rect x="417"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="474"  y="709" text-anchor="middle" class="name">TF02-Pro</text>
+    <text x="474"  y="728" text-anchor="middle" class="small">down rangefinder</text>
+
+    <rect x="542"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="599"  y="709" text-anchor="middle" class="name">Pi Camera v3</text>
+    <text x="599"  y="728" text-anchor="middle" class="small">imx708</text>
+
+    <rect x="667"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="724"  y="709" text-anchor="middle" class="name">Hailo-8</text>
+    <text x="724"  y="728" text-anchor="middle" class="small">PCIe accelerator</text>
+
+    <rect x="792"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="849"  y="709" text-anchor="middle" class="name">OLED panel</text>
+    <text x="849"  y="728" text-anchor="middle" class="small">SH1106 + buttons</text>
+
+    <rect x="917"  y="680" width="115" height="70" rx="10" class="hw"/>
+    <text x="974"  y="709" text-anchor="middle" class="name">BT radios</text>
+    <text x="974"  y="728" text-anchor="middle" class="small">on-board + USB</text>
+
+    <rect x="1042" y="680" width="115" height="70" rx="10" class="opt"/>
+    <text x="1099" y="709" text-anchor="middle" class="name">MedBox</text>
+    <text x="1099" y="728" text-anchor="middle" class="small">ESP32 · optional</text>
+  </g>
+
+  <!-- hardware to Pi -->
+  <g>
+    <path d="M224,678 V604" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path d="M349,678 V604" class="wire" marker-end="url(#arr)"/>
+    <path d="M474,678 V604" class="wire" marker-end="url(#arr)"/>
+    <path d="M599,678 V604" class="wire" marker-end="url(#arr)"/>
+    <path d="M724,678 V604" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path d="M849,678 V604" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <path d="M974,678 V604" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+
+    <rect x="200" y="630" width="48" height="20" rx="10" class="pill"/>
+    <text x="224" y="644" text-anchor="middle" class="lbl">USB</text>
+    <rect x="325" y="630" width="48" height="20" rx="10" class="pill"/>
+    <text x="349" y="644" text-anchor="middle" class="lbl">USB</text>
+    <rect x="444" y="630" width="60" height="20" rx="10" class="pill"/>
+    <text x="474" y="644" text-anchor="middle" class="lbl">UART0</text>
+    <rect x="575" y="630" width="48" height="20" rx="10" class="pill"/>
+    <text x="599" y="644" text-anchor="middle" class="lbl">CSI</text>
+    <rect x="697" y="630" width="54" height="20" rx="10" class="pill"/>
+    <text x="724" y="644" text-anchor="middle" class="lbl">PCIe</text>
+    <rect x="809" y="630" width="80" height="20" rx="10" class="pill"/>
+    <text x="849" y="644" text-anchor="middle" class="lbl">I2C + GPIO</text>
+    <rect x="929" y="630" width="90" height="20" rx="10" class="pill"/>
+    <text x="974" y="644" text-anchor="middle" class="lbl">internal + USB</text>
+  </g>
+
+  <!-- Pixhawk to servos, BT to MedBox -->
+  <path d="M224,752 V772 H99 V754" class="wire" marker-end="url(#arr)"/>
+  <text x="161" y="790" text-anchor="middle" class="lbl">PWM  AUX4 / AUX6</text>
+  <path d="M974,752 V772 H1099 V754" class="wire" stroke-dasharray="5 4" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="1036" y="790" text-anchor="middle" class="lbl">BLE (USB dongle)</text>
+
+  <!-- Legend -->
+  <g>
+    <rect x="40" y="818" width="1120" height="44" rx="10" fill="#FFFFFF" stroke="#E2E8F0"/>
+    <rect x="62" y="832" width="18" height="16" rx="4" class="ext"/>
+    <text x="88" y="845" class="small">Cloud and external clients</text>
+    <rect x="290" y="832" width="18" height="16" rx="4" class="sw"/>
+    <text x="316" y="845" class="small">Pi software (Python, systemd)</text>
+    <rect x="540" y="832" width="18" height="16" rx="4" class="hw"/>
+    <text x="566" y="845" class="small">Hardware</text>
+    <rect x="680" y="832" width="18" height="16" rx="4" class="opt"/>
+    <text x="706" y="845" class="small">Optional payload add-on</text>
+    <path d="M890,840 H930" class="wire" marker-start="url(#arr)" marker-end="url(#arr)"/>
+    <text x="940" y="845" class="small">Data / command flow</text>
+  </g>
+</svg>

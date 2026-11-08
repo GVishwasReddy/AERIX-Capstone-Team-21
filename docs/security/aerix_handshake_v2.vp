@@ -1,0 +1,73 @@
+// AERIX handshake v2 PROPOSAL: labels on every MAC + a phone nonce.
+// Needs a coordinated app + drone release (THREAT_MODEL.md section 9).
+// Verified here so the design is known-good before anyone builds it.
+
+attacker[active]
+
+principal Drone[
+    knows private token
+    knows public tag_auth
+    knows public tag_ack
+    knows public tag_gps
+    knows public tag_drop
+    knows public tag_result
+    knows public released
+    generates nonce
+]
+
+principal Phone[
+    knows private token
+    knows public tag_auth
+    knows public tag_ack
+    knows public tag_gps
+    knows public tag_drop
+    knows public tag_result
+    knows public released
+    knows private pos
+    generates phone_nonce
+]
+
+Drone -> Phone: nonce
+
+principal Phone[
+    auth = MAC(token, CONCAT(tag_auth, nonce, phone_nonce))
+]
+
+Phone -> Drone: phone_nonce, auth
+
+principal Drone[
+    _ = ASSERT(MAC(token, CONCAT(tag_auth, nonce, phone_nonce)), auth)?
+    ack = MAC(token, CONCAT(tag_ack, nonce, phone_nonce))
+]
+
+Drone -> Phone: ack
+
+principal Phone[
+    _ = ASSERT(MAC(token, CONCAT(tag_ack, nonce, phone_nonce)), ack)?
+    gps_sig = MAC(token, CONCAT(tag_gps, nonce, phone_nonce, pos))
+    drop = MAC(token, CONCAT(tag_drop, nonce, phone_nonce, pos))
+]
+
+Phone -> Drone: pos, gps_sig, drop
+
+principal Drone[
+    _ = ASSERT(MAC(token, CONCAT(tag_gps, nonce, phone_nonce, pos)), gps_sig)?
+    _ = ASSERT(MAC(token, CONCAT(tag_drop, nonce, phone_nonce, pos)), drop)?
+    result_tag = MAC(token, CONCAT(tag_result, nonce, phone_nonce, released))
+]
+
+Drone -> Phone: result_tag
+
+principal Phone[
+    _ = ASSERT(MAC(token, CONCAT(tag_result, nonce, phone_nonce, released)), result_tag)?
+]
+
+queries[
+    confidentiality? token
+    authentication? Phone -> Drone: drop
+    authentication? Phone -> Drone: gps_sig
+    authentication? Drone -> Phone: ack
+    authentication? Drone -> Phone: result_tag
+    freshness? nonce
+    freshness? phone_nonce
+]

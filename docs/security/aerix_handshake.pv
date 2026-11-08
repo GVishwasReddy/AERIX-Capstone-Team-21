@@ -1,0 +1,121 @@
+(* AERIX last-metre release handshake - symbolic (Dolev-Yao) model, ProVerif 2.x.
+
+   STATUS: NOT machine-checked by ProVerif yet (it could not be installed in the
+   session that wrote it). The same protocol WAS machine-checked with Verifpal
+   the same day (aerix_handshake*.vp, results in verifpal_results/), which
+   found T29 - so this model was corrected 2026-10-08 to match today's BYTES:
+   AUTH is an UNTAGGED MAC over whatever the phone was shown. Run it:
+
+       opam install proverif        # or your distribution's package
+       proverif docs/security/aerix_handshake.pv
+
+   and paste the real output into docs/security/THREAT_MODEL.md, section
+   "Formal model". Until then the executable evidence for each property is
+   the test named next to its query (tests/test_attack_table.py).
+
+   Mapping to drone_stack/ble_handshake/drone_ble_peripheral.py:
+     NONCE  read           -> out(air, n)
+     AUTH   HMAC(k, n)[:20]           -> mac(k, n)
+     ACK    HMAC(k, n||"ACK")[:20]    -> mac(k, (tACK, n))
+     GPS    s||0x00||HMAC(k, n||s)[:16] -> (pos, mac(k, (n, pos)))
+     DROP   HMAC(k, n||s||"DROP")[:20] -> mac(k, (n, pos, tDROP))
+     RESULT_SIGNED code||0x00||HMAC(k, n||"RESULT"||code)[:16]
+
+   Abstractions - each is an assumption the model does NOT check:
+     A1 Concatenation as tuples. AUTH = mac(k, n) with n whatever the phone
+        read; GPS = mac(k, (n, pos)); DROP = mac(k, (n, pos, tDROP)). ProVerif
+        ignores types by default, so a fake drone may hand the phone a TUPLE
+        as its "nonce" - exactly the byte-level oracle of T29. The ACK and
+        RESULT suffixes are kept as tags (their ASCII suffix differs).
+     A2 Truncation to 16/20 bytes is ignored (MACs are ideal).
+     A3 The geofence is physical: `near` stands for "a fix inside
+        ble_geofence_m of the drone". A relay of a phone that is really near
+        is indistinguishable from the phone itself; the model cannot and does
+        not rule out a relay (THREAT_MODEL.md T8 bounds it physically).
+     A4 Device binding and session expiry are not modelled; freshness of n
+        alone gives the replay result. They are tested instead (T1, T3, T5).
+     A5 The person lock, pilot override and ground interlock are mission
+        state, not cryptography - tested as T10-T13.
+*)
+
+free air: channel.                  (* BLE: attacker reads, writes, replays *)
+
+type key.
+
+free k: key [private].              (* one order's single-use deliveryToken *)
+
+fun mac(key, bitstring): bitstring.
+
+const tACK, tDROP, tRESULT: bitstring.
+const released: bitstring.
+const near: bitstring.
+
+event DroneAcked(bitstring).
+event PhoneTrustsDrone(bitstring).
+event PhoneSentDrop(bitstring, bitstring).
+event DroneReleased(bitstring, bitstring).
+event DroneSaidReleased(bitstring).
+event PhoneBelievesReleased(bitstring).
+
+(* Q1 Token secrecy on the air.                         expected: TRUE
+   The token never crosses BLE; only MACs under it do. *)
+query attacker(k).
+
+(* Q2 No release without the recipient's own DROP, and   expected: FALSE today
+   never two releases for one DROP (injective = no replay).   (T29: the phone
+   Tests: T0-T7; T29 is the counter-example.                   signs (n,pos,tDROP)
+   With the app's 16-byte nonce check (tag AUTH: mac(k,(tAUTH,n)))  as its "nonce")
+   expected TRUE - Verifpal v1.1 agrees. *)
+query n: bitstring, p: bitstring;
+  inj-event(DroneReleased(n, p)) ==> inj-event(PhoneSentDrop(n, p)).
+
+(* Q3 The phone only trusts a drone that holds the token. expected: FALSE today
+   (the oracle signs (tACK, n) as a "nonce" -> a forged ACK; Verifpal agrees);
+   TRUE with the 16-byte check. Test: T16. *)
+query n: bitstring; event(PhoneTrustsDrone(n)) ==> event(DroneAcked(n)).
+
+(* Q4 ...and each trust matches a distinct drone session. expected: FALSE
+   The phone contributes no nonce, so a fake drone can replay an old
+   (nonce, ACK) pair and be "trusted". It gains nothing on the real drone
+   (that session is dead - Q2 still holds), but it can then show the phone a
+   fake outcome unless the phone checks RESULT_SIGNED (Q5). Fix needs the app:
+   phone nonce in AUTH (THREAT_MODEL.md T22). *)
+query n: bitstring; inj-event(PhoneTrustsDrone(n)) ==> inj-event(DroneAcked(n)).
+
+(* Q5 A phone that checks RESULT_SIGNED only believes     expected: FALSE today
+   "released" when the drone said so. Today the oracle signs (tRESULT, n,
+   released) on request, so even the signed outcome can be forged; with the
+   16-byte check it holds (non-injectively; v2 makes it injective). Test: T18. *)
+query n: bitstring; event(PhoneBelievesReleased(n)) ==> event(DroneSaidReleased(n)).
+
+let Drone =
+  new n: bitstring;
+  out(air, n);
+  in(air, a: bitstring);
+  if a = mac(k, n) then
+  event DroneAcked(n);
+  out(air, mac(k, (tACK, n)));
+  in(air, (pos: bitstring, sg: bitstring));
+  if sg = mac(k, (n, pos)) then
+  if pos = near then
+  in(air, d: bitstring);
+  if d = mac(k, (n, pos, tDROP)) then
+  event DroneReleased(n, pos);
+  event DroneSaidReleased(n);
+  out(air, (released, mac(k, (tRESULT, n, released)))).
+
+let Phone =
+  in(air, n: bitstring);        (* today's app: signs ANY challenge *)
+  out(air, mac(k, n));
+  in(air, ack: bitstring);
+  if ack = mac(k, (tACK, n)) then
+  event PhoneTrustsDrone(n);
+  out(air, (near, mac(k, (n, near))));
+  event PhoneSentDrop(n, near);
+  out(air, mac(k, (n, near, tDROP)));
+  in(air, (r: bitstring, rt: bitstring));
+  if r = released && rt = mac(k, (tRESULT, n, released)) then
+  event PhoneBelievesReleased(n).
+
+process
+  ( !Drone | !Phone )

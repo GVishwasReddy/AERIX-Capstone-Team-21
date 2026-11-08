@@ -1,0 +1,93 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+*.log
+logs/
+.DS_Store
+*.swp
+flight_logs/
+
+# ad-hoc timestamped backups made by editor sessions (not source)
+.claude_backup_*/
+.gcs_backup_*/
+gstshark_*/
+
+# large binary model weights - not source, swapped via config/novelty/models.yaml
+models/*.hef
+person_detect/*.hef
+
+# runtime logs
+hailort.log
+pyhailort.log
+
+# ad-hoc backup copies left alongside edited files
+*.bak_*
+*.bak.*
+*.bak-*
+
+# Firebase service-account private key: full project access, never commit it.
+config/firebase-service-account.json
+config/*service-account*.json
+config/pending_order.json
+
+# ad-hoc pre-edit snapshots left alongside edited files by editor sessions
+*.pre-*
+*.claude-bak
+*.prof-bak
+*.3m-profile-*
+*.predeploy_*
+*.preyaw_*
+*.bw_*
+.backup_delivery/
+backup-*/
+
+# stale duplicate of config/real.yaml left at the repo root
+/real.yaml
+
+# Live delivery state: contains real delivery tokens, recipient IDs and
+# customer GPS coordinates. Never commit.
+drone_stack/ble_handshake/active_order*.json
+drone_stack/ble_handshake/receipts/
+# Ed25519 receipt-signing key: the drone's identity in the delivery ledger.
+drone_stack/ble_handshake/keys/
+
+# flight video: the recorder keeps one clip plus its poster and
+# metadata here. Hundreds of MB of footage, and not source.
+recordings/
+
+# MedBox HMAC command key (same bytes as the firmware's medbox_secret.h) and
+# the runtime state the GCS keeps (operator's payload-kind choice).
+config/medbox_key*
+var/
+
+# local tooling: the graphify knowledge graph of this repo, rsync scratch,
+# and one-off stderr captures
+graphify-out/
+.synctmp/
+err.txt
+
+# keep the placeholder key files (no real key material)
+!config/medbox_key.txt.example
+
+# private engineering notebook with host credentials; the public copy is docs/PROJECT_NOTES.md
+CLAUDE.md
+
+# MedBox add-on: real key header and PlatformIO build output
+addons/medbox/firmware/include/medbox_secret.h
+addons/medbox/firmware/.pio/
+
+# model weights and media
+*.hef
+*.onnx
+*.mp4
+*.h264
+*.tlog
+*.BIN
+front_panel/scratch/

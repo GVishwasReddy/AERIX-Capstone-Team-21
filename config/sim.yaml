@@ -1,0 +1,34 @@
+# -----------------------------------------------------------------------------
+# SIMULATION profile - deep-merged on top of default.yaml.
+# No hardware required. Run with:  scripts/run_sim.sh
+# -----------------------------------------------------------------------------
+mode: sim
+
+logging:
+  level: INFO
+
+# In sim the connection string is irrelevant (the mock Pixhawk is used), but we
+# keep a valid value so switching mode->real needs only this one edit + ports.
+mavlink:
+  connection: "udp:127.0.0.1:14550"
+
+web:
+  enabled: true
+  port: 8090
+
+# Simulation is the safety net: orders are accepted and flown automatically so
+# the whole Firebase -> waypoints -> hover -> RTL path can be exercised without
+# a human in the loop, and without touching Firebase at all.
+delivery:
+  enabled: true
+  source: file
+  auto_accept: true
+  upload_to_fc: false
+  write_back: false
+  max_delivery_radius_m: 500.0
+
+# Mock TF02-Pro (world altitude + mount height + noise) so the rangefinder
+# node and the GCS AGL readout run in simulation. The precision drop itself
+# stays off here (default.yaml), so the sim delivery path is unchanged.
+rangefinder:
+  enabled: true

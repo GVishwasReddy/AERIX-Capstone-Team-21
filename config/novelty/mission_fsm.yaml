@@ -1,0 +1,44 @@
+# -----------------------------------------------------------------------------
+# §2.3 mission state machine - per-state timeouts. Every non-terminal state
+# (drone_stack/novelty/mission_fsm.py TIMED_STATES) MUST have an entry here;
+# novelty/config.py fails loud if one is missing or if an entry names a
+# state that does not exist. See docs/novelty/mission_fsm.md for the full
+# transition table these timeouts bound.
+# -----------------------------------------------------------------------------
+
+state_timeout_s:
+  # GUESSED - all values below are starting points, not flight-tested.
+  SEARCHING_PERSON: 60.0
+  PERSON_FOUND: 5.0
+  SEARCHING_ZONE: 30.0
+  ZONE_FOUND: 10.0
+  DESCENDING: 45.0
+  ABORT_DESCENT: 5.0
+  AUTHENTICATING: 20.0
+  HOVER_AND_RETRY: 15.0
+  RELEASING: 8.0
+  ASCENDING: 20.0
+  EXPANDING_SEARCH_RADIUS: 10.0
+
+# How much to widen the search radius each time EXPANDING_SEARCH_RADIUS
+# fires (metres), and the ceiling before giving up entirely -> ABORT_RTL.
+# GUESSED.
+search_radius_expansion_m: 5.0
+max_search_radius_m: 30.0
+
+# Max times HOVER_AND_RETRY loops back to AUTHENTICATING before giving up.
+# The brief specifies exactly one retry for disambiguation (§2.5); kept
+# configurable rather than hardcoded per §7 ("no magic numbers").
+max_hover_retries: 1
+
+# Altitude (alt_rel_m) above the chosen landing zone at which DESCENDING
+# hands off to AUTHENTICATING - the hover height where recipient auth and
+# release happen, before final touchdown. GUESSED - low enough for reliable
+# BLE RSSI + a close vision view of the recipient, high enough to still
+# re-ascend safely on an abort.
+descent_hover_altitude_m: 2.0
+
+# Altitude (alt_rel_m) at which ASCENDING hands off to RTL after a
+# successful release. GUESSED - matches navigation.yaml's typical cruise
+# altitude so RTL starts from a familiar height.
+ascend_target_altitude_m: 8.0

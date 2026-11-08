@@ -1,0 +1,19 @@
+Verifpal 1.6.4 - https://verifpal.com
+ Verifpal * Verification initiated for 'aerix_handshake_v2.vp' at 06:39:28 AM.
+     Info . Analyzing 2 parallel sessions per principal; per-session values and principals are suffixed #2.
+     Info . Attacker is configured as active.
+
+--------------------------------------------------
+ Verifpal * Verification completed for 'aerix_handshake_v2.vp' at 06:39:28 AM in 263ms.
+
+     PASS + confidentiality? token  [search exhausted at 2 sessions]
+     PASS + authentication? Phone -> Drone: drop  [search exhausted at 2 sessions]
+     PASS + authentication? Phone -> Drone: gps_sig  [search exhausted at 2 sessions]
+     PASS + authentication? Drone -> Phone: ack  [search exhausted at 2 sessions]
+     PASS + authentication? Drone -> Phone: result_tag  [search exhausted at 2 sessions]
+     PASS + freshness? nonce  [search exhausted at 2 sessions]
+     PASS + freshness? phone_nonce  [search exhausted at 2 sessions]
+
+--------------------------------------------------
+     PASS + All 7 queries pass.
+ Verifpal * Thank you for using Verifpal.

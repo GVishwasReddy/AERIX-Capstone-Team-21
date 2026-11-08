@@ -1,0 +1,798 @@
+# =============================================================================
+# drone_stack - default configuration
+# -----------------------------------------------------------------------------
+# This file holds every tunable parameter with sane defaults. Environment
+# profiles (config/sim.yaml, config/real.yaml) are deep-merged ON TOP of this
+# file, so they only need to specify the handful of values that differ.
+#
+# To go from SIMULATION to REAL HARDWARE you normally only change:
+#     mode:                sim  -> real
+#     mavlink.connection:  udp  -> /dev/ttyACM0   (your Pixhawk serial port)
+#     lidar.port:               -> /dev/serial/by-id/usb-Silicon_Labs_...-port0
+#                                  (RPLIDAR; use by-id, not /dev/ttyUSBn)
+# Everything else keeps working unchanged.
+# =============================================================================
+
+# "sim"  -> mock Pixhawk + mock LiDAR are used (no hardware required)
+# "real" -> pymavlink + RPLIDAR driver talk to physical devices
+mode: sim
+
+logging:
+  level: INFO            # DEBUG | INFO | WARNING | ERROR
+  dir: logs             # log files are written here (created if missing)
+  console: true
+  max_bytes: 5242880     # 5 MB per rotated log file
+  backup_count: 3
+
+# -----------------------------------------------------------------------------
+# MAVLink / Pixhawk 2.4.8 (ArduPilot)
+# -----------------------------------------------------------------------------
+mavlink:
+  enabled: true
+  # REAL examples:  "/dev/ttyACM0"  "/dev/serial0"  "/dev/ttyAMA0"
+  # SIM  examples:  "udp:127.0.0.1:14550"  (also used to attach to SITL/MAVProxy)
+  connection: "udp:127.0.0.1:14550"
+  baud: 115200               # only used for serial connection strings
+  source_system: 255         # this companion computer's MAVLink system id
+  source_component: 190      # MAV_COMP_ID_ONBOARD_COMPUTER
+  target_system: 1           # the autopilot's system id
+  target_component: 1
+  reconnect_interval_s: 2.0  # wait between reconnection attempts
+  heartbeat_timeout_s: 5.0   # link considered lost after this many seconds
+  request_stream_rate_hz: 10 # data stream rate requested from the autopilot
+  rate_hz: 50                # node service loop rate
+
+# -----------------------------------------------------------------------------
+# Slamtec RPLIDAR C1
+# -----------------------------------------------------------------------------
+lidar:
+  enabled: true
+  # Stable by-id path; /dev/ttyUSBn shifts after any USB bus reset.
+  port: "/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_3e8e15cb1664ef11b066daa9c169b110-if00-port0"
+  baud: 460800               # C1 default baudrate
+  frame_id: "lidar_link"
+  rate_hz: 10                # poll rate; only completed revolutions publish
+  empty_warn_s: 0.5          # WARN only when no revolution arrives for this long
+  reconnect_interval_s: 2.0
+  min_range_m: 0.15
+  max_range_m: 12.0
+  # Beam-angle handedness of the physical device. Slamtec units number their
+  # beams CLOCKWISE looking down on the unit; LaserScan/PointCloud and every
+  # consumer of them are COUNTER-CLOCKWISE (x forward, y left). Leave true for
+  # an RPLIDAR - set false only for a sensor that already reports CCW. Getting
+  # this wrong mirrors the radar left/right AND makes avoidance dodge the
+  # wrong way. Real driver only; the simulator emits CCW natively.
+  clockwise: true
+  # Mounting offset. This is what DEFINES the front: it is the device's own
+  # RAW (clockwise) angle in the direction of the airframe's nose. Point the
+  # nose, read what the LiDAR calls that direction, put the number here; 0 deg
+  # then lands on the nose and every angle below is measured from it.
+  # Applied AFTER the handedness flip above.
+  angle_offset_deg: 0.0
+  invert: false              # set true if the unit is mounted upside-down
+  # Field of view, centred on the 0 deg front reference above: 135 deg to the
+  # left + 135 deg to the right = 270 deg scanned. The remaining 90 deg,
+  # directly behind the aircraft, is blanked to inf inside the driver and
+  # never reaches the point cloud, the obstacle detector, collision avoidance
+  # or the GCS radar. That rear wedge always contains the airframe itself and
+  # whatever the drone is parked next to - permanent, stationary returns that
+  # would otherwise keep the avoidance logic braking for nothing.
+  fov_enabled: true
+  fov_deg: 250.0             # set 360.0 (or fov_enabled: false) for full circle
+
+  # --- Noise rejection -------------------------------------------------------
+  # Two stages, deliberately different in kind, because they catch different
+  # things. Measured on the bench 2026-09-21 (202 revolutions, 10.1 Hz): this
+  # sensor's ranges are excellent - 2.4 cm median spread on a solid bin, 0.1% of
+  # consecutive frames moving more than a cluster gap - but its OCCUPANCY
+  # flickers: 12.6% of bins that ever hold a return hold one in a quarter of
+  # revolutions or fewer. Persistence is therefore the instrument, not smoothing.
+  #
+  # Stage 1, at the sample: the C1 reports a 6-bit quality per measurement.
+  # Samples in solid bins have a median quality of 25; samples in flickering
+  # bins, 2. Gating at 4 keeps 99.8% of the real signal and cuts flickering bins
+  # from 33 to 11. Do NOT raise this hoping for more - past the knee it destroys
+  # returns off real surfaces and the flicker count climbs back. 0 disables.
+  quality_min: 4
+  #
+  # Stage 2, across revolutions: a return is published only if recent history
+  # corroborates it. Costs at most filter_min_support revolutions of latency
+  # (~200 ms at 10 Hz = 0.20 m at the 1.0 m/s cruise) against an avoidance band
+  # that opens at 10 m, and fast_approach spends less than that on anything
+  # closing.
+  filter_enabled: true
+  filter_depth: 3            # previous revolutions retained as evidence
+  filter_min_support: 2      # how many of them must agree before publishing
+  # Angular grace for a corroborating return. NOT cosmetic: at 10 deg/s of
+  # commanded slew the airframe turns 3 bins across a depth-3 window, and a
+  # 0.3 m pole at 8 m is only ~2 bins wide - so a strict per-bin test would
+  # erase a real pole exactly while the aircraft is turning to avoid it.
+  filter_angular_tol_bins: 3
+  # ...and what keeps that grace honest: a neighbouring bin only corroborates if
+  # it agrees about distance too. Matches obstacles.cluster_gap_m, the distance
+  # the clusterer already treats as "the same object".
+  filter_range_tol_m: 0.30
+  # Asymmetric, like proximity.fast_approach: something closing is worth
+  # spending latency on, something receding is not.
+  filter_fast_approach: true
+
+# -----------------------------------------------------------------------------
+# Sensor fusion (Phase 4) - complementary filter now, EKF-ready interface
+# -----------------------------------------------------------------------------
+fusion:
+  enabled: true
+  rate_hz: 30
+  attitude_alpha: 0.98       # complementary filter weight (gyro vs accel)
+  use_gps: true
+  use_lidar: true
+
+# -----------------------------------------------------------------------------
+# Obstacle detection & classification (Phase 5)
+# -----------------------------------------------------------------------------
+obstacles:
+  enabled: true
+  rate_hz: 10
+  cluster_gap_m: 0.30        # max gap between beams to stay one cluster
+  min_points: 3              # clusters this size publish at once
+  min_object_width_m: 0.10   # range-aware gate: points needed shrink with range
+  sparse_min_hits: 3         # revolutions a < min_points cluster must persist
+  coast_s: 0.35              # keep publishing a confirmed track through dropouts
+  danger_distance_m: 2.0     # obstacles closer than this are flagged DANGER
+  person_width_range_m: [0.25, 0.80]
+  pole_width_max_m: 0.35
+  vehicle_width_range_m: [1.20, 4.00]
+  wall_min_length_m: 2.50
+
+# -----------------------------------------------------------------------------
+# Navigation, collision avoidance & safety (Phase 6)
+# -----------------------------------------------------------------------------
+navigation:
+  enabled: true
+  rate_hz: 10
+  waypoint_radius_m: 1.5     # distance at which a waypoint is "reached"
+  # Low-altitude delivery profile: this airframe operates under a hard 3 m
+  # ceiling (safety.max_altitude_m). Every altitude the navigator commands is
+  # clamped to it, so these are the working values, not just requests.
+  cruise_altitude_m: 2.0
+  cruise_speed_ms: 3.0
+  takeoff_altitude_m: 2.0
+  avoidance_distance_m: 2.5  # start avoiding obstacles closer than this
+  avoidance_stop_m: 1.2      # hard stop / brake distance
+  avoidance_enabled: true    # collision avoidance active on startup
+  avoidance_min_alt_m: 0.0   # takeoff gate: STANDBY below this until latched (0 = off)
+  avoidance_trapped_decel_ms2: 0.4  # no-gap approach decel into the brake distance
+  # Reactive sector avoidance (ported from Drone-Autonomy-ROS2). The scan is
+  # split into a front cone and two side cones; when the front is blocked the
+  # aircraft sidesteps toward whichever side has more room.
+  avoidance_front_half_deg: 50.0   # half-angle of the cone that gates SLOW/STOP
+  avoidance_side_half_deg: 125.0   # side cones run to the edge of lidar.fov_deg
+  avoidance_dodge_enabled: true    # false -> brake and hold, the old behaviour
+  avoidance_dodge_speed_ms: 1.0    # lateral sidestep speed
+  avoidance_dodge_clear_m: 2.5     # a side counts as open only past this
+  avoidance_dodge_timeout_s: 5.0   # give up sidestepping and hold after this
+  # VFH+ steering (Ulrich & Borenstein), the approach used in
+  # Drone-Autonomy-ROS2' mission_avoidance_node. Replaces "left or right?"
+  # with a polar histogram over the scanned window: every obstacle is widened
+  # by asin(safety_radius / distance) so near things block a wider arc, gaps
+  # narrower than min_valley are discarded as unflyable, and the course is set
+  # to the surviving gap closest to the waypoint. The histogram only spans
+  # lidar.fov_deg, so the masked rear has no bins and cannot be chosen.
+  avoidance_vfh_enabled: true
+  avoidance_vfh_sector_deg: 5.0            # histogram bin width
+  # MUST exceed avoidance_stop_m (1.2 here) with margin, or VFH+ steers to
+  # miss by less than the distance at which the brake declares an emergency
+  # and every manoeuvre ends in a dead stop. See config/real.yaml for the
+  # measured sweep behind this. Raised 1.0 -> 1.6 on 2026-09-19.
+  avoidance_vfh_safety_radius_m: 1.6       # angular-enlargement half-width
+  avoidance_vfh_min_valley_deg: 18.0       # narrower gaps are not flyable
+  avoidance_vfh_goal_weight: 1.0           # pull toward the waypoint
+  avoidance_vfh_hysteresis_weight: 0.8     # commit, instead of dithering
+  avoidance_vfh_max_heading_rate_deg_s: 45.0  # cap on course slew
+  avoidance_vfh_range_m: 10.0              # obstacles beyond this do not steer
+  # Cruise-band steering (2026-09-19). Between avoidance_distance_m and
+  # avoidance_stop_m the node used to command nothing, deferring to the FC's
+  # path planner; with OA_TYPE=0 nothing was routing and the aircraft flew to
+  # the brake distance and stopped. It now bends the course continuously
+  # across that band instead - see CollisionAvoider.steer_authority.
+  avoidance_steer_rate_deg_s: 15.0   # slew limit for the cruise-band nudge
+  avoidance_steer_speed_ms: 0.0      # 0 = hold cruise_speed_ms while bending
+  auto_arm: true             # arm automatically when a mission starts (sim-safe)
+
+# Streams the LiDAR to the flight controller as OBSTACLE_DISTANCE so
+# ArduPilot's own avoidance can limit the PILOT's stick demand. This is the
+# only avoidance that survives a manual takeover - the navigator above stands
+# down the moment the transmitter moves. Off by default: it does nothing until
+# the FC parameters are set (see proximity_node.py).
+proximity:
+  enabled: false
+  rate_hz: 10
+  min_distance_m: 0.30
+  max_distance_m: 12.0
+  min_points: 2      # returns a sector needs before it reports at all
+  filter_depth: 3    # sector distance is the median of this many revolutions
+
+safety:
+  battery_low_voltage: 14.0      # 4S nominal; trigger RTL
+  battery_critical_voltage: 13.2 # trigger LAND
+  battery_low_pct: 25
+  battery_critical_pct: 15
+  gcs_link_timeout_s: 3.0        # MAVLink silence before failsafe
+  failsafes_enabled: true        # master switch for GCS-side auto-failsafes
+  min_satellites: 6
+  min_gps_fix_type: 3            # 3 = 3D fix
+  # Horizontal fence, metres from home (the point the aircraft armed at).
+  # Exceeding it triggers RTL. Kept close above max_delivery_radius_m: the
+  # route is home -> target -> home, so a legal delivery never approaches it,
+  # and the gap is only there to absorb GPS wander and waypoint overshoot.
+  geofence_radius_m: 75.0
+  # HARD CEILING, metres above the launch point. NavigationNode clamps every
+  # commanded altitude to this value; exceeding it by altitude_margin_m (an
+  # uncommanded climb) trips the max_altitude failsafe and brakes.
+  max_altitude_m: 2.0
+  # How far above max_altitude_m an *uncommanded* climb must go before the
+  # hardlock brakes. Not slack in the ceiling: commanded altitudes are clamped
+  # to exactly max_altitude_m. This is only fault-detection headroom, sized
+  # above baro/EKF noise (~0.3 m) so a hovering aircraft is not nuisance-braked.
+  altitude_margin_m: 0.7
+  # How long the FC may report a mode we did not command before we conclude
+  # the pilot took over on the transmitter and stop sending commands.
+  pilot_override_grace_s: 1.5
+  # Transmitter authority. The RC transmitter is the manual override and
+  # always outranks anything the companion computer wants. Any channel that
+  # moves more than rc_override_deadband_us from the baseline captured when
+  # the link came up hands the aircraft to the pilot immediately - no grace
+  # period, because the grace period is what the pilot was fighting.
+  rc_override_deadband_us: 60
+  # Sticks are debounced, switches are not. The first rc_stick_channels
+  # channels (roll, pitch, throttle, yaw) only count as a takeover once one is
+  # held more than rc_stick_deadband_us off its baseline for rc_stick_hold_s,
+  # or pushed past rc_stick_slam_us (immediate). 2026-10-04: two missions
+  # aborted at 1 m AGL on a <0.35 s yaw flick (to 1168 us, back by 0.3 s), and
+  # the aircraft then hovered in GUIDED, where the sticks do nothing. The mode
+  # switch is the real takeover and still hands over on the next frame.
+  rc_stick_channels: 4
+  rc_stick_deadband_us: 150
+  rc_stick_hold_s: 0.5
+  rc_stick_slam_us: 400
+  # RC frames keep arriving briefly after the transmitter is switched off,
+  # so anything older than this counts as no link rather than a live one.
+  rc_stale_s: 3.0
+  # Minimum spacing between repeated SET_MODE frames for the same mode. A
+  # mode re-sent every tick pulls the aircraft back out of whatever the
+  # pilot just selected and re-initialises the FC's altitude target.
+  mode_resend_interval_s: 1.0
+  # Arming: the autopilot can refuse for a while as GPS/EKF settle, so retries
+  # are paced (not fired every step) and bounded - a prearm check that has not
+  # cleared in arm_timeout_s will not clear by being asked again.
+  arm_retry_interval_s: 1.0
+  arm_timeout_s: 30.0
+
+# -----------------------------------------------------------------------------
+# Diagnostics (Phase 9)
+# -----------------------------------------------------------------------------
+diagnostics:
+  enabled: true
+  rate_hz: 1
+  cpu_warn_pct: 85.0
+  mem_warn_pct: 85.0
+  temp_warn_c: 80.0
+  sensor_stale_s: 2.0        # sensor considered stale if no data in this time
+
+# -----------------------------------------------------------------------------
+# Web dashboard / visualization (Phase 8) - replaces RViz
+# -----------------------------------------------------------------------------
+web:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8090
+  stream_rate_hz: 10
+
+# -----------------------------------------------------------------------------
+# Simulation world (Phase 7) - only used when mode == "sim"
+# -----------------------------------------------------------------------------
+sim:
+  update_rate_hz: 50
+  start_position: { lat: 47.397742, lon: 8.545594, alt_amsl_m: 488.0 }
+  start_heading_deg: 0.0
+  battery_capacity_v: 16.8       # 4S full charge
+  battery_drain_per_min_v: 0.05
+  # Static obstacles placed in the local ENU frame (metres, relative to start).
+  # type is used by the mock LiDAR to size the return and by tests.
+  obstacles:
+    - { type: wall,    x: 8.0,  y: 0.0,  width: 6.0,  depth: 0.3 }
+    - { type: tree,    x: 5.0,  y: 4.0,  width: 0.6,  depth: 0.6 }
+    - { type: pole,    x: 3.0,  y: -2.5, width: 0.2,  depth: 0.2 }
+    - { type: person,  x: 4.0,  y: -0.5, width: 0.5,  depth: 0.4 }
+    - { type: vehicle, x: 10.0, y: 3.0,  width: 2.0,  depth: 4.0 }
+
+# -----------------------------------------------------------------------------
+# Payload servo — Pixhawk AUX1 (SERVO output ch 9, MG995R)
+# -----------------------------------------------------------------------------
+# The transmitter button on rc_channel toggles the AUX1 servo, edge-triggered so
+# it never fights the GCS "PAYLOAD · AUX1 SERVO" buttons (same set_servo path).
+# HIGH (>1700us) -> release_us, LOW (<1300us) -> lock_us. Values match app.js.
+payload:
+  out_channel: 12     # FC servo output driven (AUX4 == SERVO12)
+  rc_channel: 7       # transmitter input channel that toggles it (Button A)
+  # PIN HISTORY: AUX1/SERVO9 -> AUX5/SERVO13 (2026-09-06) -> AUX4/SERVO12
+  # (2026-09-11). The MG995 sat dead on AUX5 for five days with the FC
+  # provably driving the pin - servo13_raw tracked every command - so the
+  # fault was past the FC. Moved to AUX4 to prove it. SERVO12_FUNCTION is
+  # already 0 and SERVO12_MIN/MAX are still factory 1100-1900, which is
+  # WIDER than lock_us..release_us, so no FC-side widening is needed and
+  # the 2026-08-10 mechanism-breaking full sweep is not repeated here.
+  # !! RE-MEASURE THESE !! The servo was swapped from a 40 kg digital servo to
+  # an MG995 on 2026-08-31. These two numbers were calibrated against the OLD
+  # servo's horn and travel, so they no longer describe this mechanism: the two
+  # servos do not put the horn in the same place for the same pulse width.
+  # Find the real positions with the GCS "PAYLOAD" tuning slider (which reads
+  # out the exact microseconds), then put them here - config is the single
+  # source of truth, and both the UI buttons and the transmitter's Button A
+  # (mavlink_node) read these.
+  lock_us: 1100       # PWM that holds/locks the payload
+  release_us: 1410    # PWM that releases/drops the payload
+
+  # Travel envelope for the tuning slider and the clamp on EVERY set_servo.
+  # 500-2500 us over 180 deg is the standard MG995 mapping (~11.1 us/deg).
+  #
+  # WARNING, and it is not theoretical: running this servo output over its full
+  # travel bottomed the horn on its mechanical stop and broke the mechanism on
+  # 2026-08-10, which is why the range was cut to 1170-1830 back then. It is
+  # deliberately open again to let the new servo be characterised end to end.
+  # Once the real lock/release points are known, NARROW min_us/max_us back to
+  # just outside them - the wide range is a commissioning tool, not a setting
+  # to fly with.
+  min_us: 500         # slider floor and command clamp
+  max_us: 2500        # slider ceiling and command clamp
+
+  # WHAT is on the hook, separate from the servo that releases it. AERIX is a
+  # delivery drone, not a medical-only drone:
+  #   parcel - plain package; no payload telemetry (the default)
+  #   medbox - the ESP32 medical box; aerix-payload.service links to it over
+  #            BLE on the USB dongle and the GCS/OLED show its integrity
+  #   none   - flying empty
+  # This is only the boot default. The operator's choice (GCS PAYLOAD
+  # selector or the OLED) is kept in var/payload_kind.json and wins over it.
+  kind: parcel
+  medbox:
+    # No report from the bridge for this long = its service is down. The
+    # bridge heartbeats every 3 s, so 10 s rides out one missed poll.
+    stale_s: 10
+
+# MG90S servo on Pixhawk AUX6 (FC output SERVO14). Powered from its own
+# supply with GND common to the Pixhawk, signal to AUX6.
+#
+# NOTE ON THE BLOCK NAME: this is still called `aux2_servo` for history - the
+# servo was first fitted on AUX2 (2026-09-05) and moved to AUX6 on 2026-09-06
+# when the AUX1/AUX2 pins turned out not to drive anything. The PORT is
+# `out_channel` below and nothing else; do not infer it from the block name.
+#
+# Deliberately NOT folded into `payload:` above - it is a different mechanism
+# with different travel, and each block clamps only its own channel. GcsHub
+# builds a per-channel envelope map from the two, so narrowing one servo's
+# limits never truncates the other's commands.
+#
+# Its job is a ~90 deg rotate on command, but the real start and stop angles
+# have not been measured yet, so the GCS gives it a bare sweep slider with no
+# presets. Once the two positions are known, add them here.
+aux2_servo:
+  out_channel: 14     # FC servo output driven (AUX6 == SERVO14)
+
+  # The two positions the GCS buttons command. This servo only ever goes to
+  # one of these, so the commissioning slider was removed on 2026-09-11 and
+  # replaced by a DOWN/UP pair - the operator can no longer park the horn at
+  # an arbitrary angle by accident. Change the travel here, not in app.js.
+  down_deg: 148.0     # "DOWN" button. Was 165; raised to 148 on 2026-10-05,
+                      # picked by eye with a temporary GCS tilt slider (2144 us).
+  up_deg: 90.0        # "UP" button
+
+  # Automatic camera tilt during an autonomous delivery (NavigationNode, added
+  # 2026-09-23). The servo aims the camera, so it is pointed DOWN at the drop
+  # point on approach - the operator watches the recipient and the handshake
+  # from overhead - and back UP when the aircraft turns for home (on EVERY
+  # return, failsafe included), so the return is flown looking where it is
+  # going. DOWN again while the FC is in LAND (whoever selected it), and UP
+  # once it disarms on touchdown. Uses down_deg / up_deg above; there are no
+  # angles of its own.
+  #
+  # down_before_drop_m is measured to the DROP waypoint (the one with a hold,
+  # i.e. the customer's pin), not to intermediate route legs.
+  auto_tilt: true
+  down_before_drop_m: 3.0
+
+  # Full MG90S travel: 500-2500 us over 180 deg (~11.1 us/deg). Wide open on
+  # purpose so the servo can be characterised end to end.
+  #
+  # WARNING, and it is not theoretical: sweeping the AUX1 servo over its FULL
+  # travel bottomed the horn on its mechanical stop and BROKE that mechanism on
+  # 2026-08-10. As soon as this servo has a linkage attached, narrow
+  # min_us/max_us to just outside its real working positions - the wide range
+  # is a commissioning tool, not a setting to fly with.
+  min_us: 500         # slider floor and command clamp
+  max_us: 2500        # slider ceiling and command clamp
+  deg_span: 180.0     # degrees between min_us and max_us
+  deg_span: 180.0     # degrees swept between min_us and max_us
+
+# -----------------------------------------------------------------------------
+# Novelty layer — autonomous markerless delivery (drone_stack/novelty/)
+# -----------------------------------------------------------------------------
+# Off by default: the layer is additive and optional (see the project plan's
+# own architecture note) - launch/bringup.py only constructs DeliveryNode when
+# this is true. Its own five config/novelty/*.yaml files hold every
+# algorithmic threshold; this section only carries bringup-level wiring.
+novelty:
+  enabled: false
+  rate_hz: 5.0              # DeliveryNode control-loop rate
+  flight_logs_dir: flight_logs   # EvidenceLogger JSONL output directory
+  repo_dir: .                     # for the evidence log's git-hash stamp
+
+# -----------------------------------------------------------------------------
+# Firebase parcel delivery (FirebaseDeliveryNode)
+# -----------------------------------------------------------------------------
+# One customer order in Firestore -> an expanded waypoint list -> a flight to
+# the drop point -> a timed position hold -> smart RTL home. Everything the
+# node does is mirrored to the GCS delivery panel in real time.
+#
+# Altitudes here are still clamped by safety.max_altitude_m, which is the one
+# number that decides how high this aircraft is ever allowed to go.
+delivery:
+  enabled: true
+  source: firestore          # firestore | file | none
+  collection: orders         # Firestore collection the Flutter app writes to
+  # Service-account JSON downloaded from the Firebase console
+  # (Project settings -> Service accounts -> Generate new private key).
+  # Relative paths resolve against the repo root.
+  credentials_path: "config/firebase-service-account.json"
+  # The AERIX Firebase project (from the Flutter app's google-services.json).
+  # Set explicitly so a mis-scoped key fails loudly instead of quietly
+  # reading someone else's "orders" collection.
+  project_id: "aerix-drone-delivery"
+  file_path: "config/pending_order.json"   # used when source == file
+  poll_interval_s: 3.0       # how often to ask Firestore for new orders
+  rate_hz: 2                 # node loop rate
+
+  # Safety gates ------------------------------------------------------------
+  # false = a human presses "ACCEPT & FLY" on the GCS before the aircraft
+  # moves. Orders that were already in the database when the node started are
+  # never auto-accepted regardless, so a stale row cannot launch on boot.
+  auto_accept: false
+  # Orders with a target further than this from home are refused outright,
+  # before the aircraft moves. This is a gate, not a fence - it never fires in
+  # flight. Must stay below safety.geofence_radius_m.
+  max_delivery_radius_m: 60.0
+  require_gps_fix: true
+
+  # Flight profile ----------------------------------------------------------
+  hover_seconds: 15.0        # position hold over the drop point
+  hover_altitude_m: 2.0
+  # GUIDED only. POSHOLD and LOITER are "position hold" for a pilot holding
+  # the throttle at centre - during an autonomous delivery nobody is, the
+  # stick rests at RC3_MIN, and entering one commands a full-rate descent into
+  # the ground (it broke this airframe's landing gear twice; see
+  # NavigationNode._STICK_ALTITUDE_MODES). The navigator rejects those modes
+  # and substitutes GUIDED, so setting them here only produces an error log.
+  hover_mode: GUIDED
+  # Sag below hover_altitude_m that re-asserts the hold (_guard_hover_altitude).
+  hover_alt_tolerance_m: 1.0
+  # BLE handshake early-exit (added 2026-08-27): drone_ble_peripheral.py posts
+  # ble_delivery_result to the GCS once its own security gates (HMAC mutual
+  # auth, micro-geofence, DROP HMAC) all pass for the order being flown -
+  # GcsHub bridges that onto Topics.DELIVERY_BLE_RESULT and NavigationNode
+  # (_on_ble_delivery_result / _do_hover) cuts the drop-point hold short
+  # ble_early_rtl_wait_s after that signal, rather than waiting out the full
+  # hover_seconds. If the handshake never completes, hover_seconds is still
+  # the hard ceiling - RTL fires exactly as it always has. Set
+  # ble_early_rtl_enabled: false to fall back to the old pure-timer behavior
+  # without touching any code.
+  ble_early_rtl_enabled: true
+  # BLE micro-geofence: the phone's GPS (median of the temporal-consistency
+  # window) must be within this many metres of the drone's own GPS before the
+  # app is told GEOFENCE_OK and may write DROP. It compares two independent
+  # receivers - a phone (3-8 m error) and the FC - so it cannot be tighter than
+  # their combined error. At 5.0 m it never once passed: on 2026-10-04 the
+  # recipient stood under a locked camera and read 5.3-6.7 m every time. The
+  # camera lock, HMAC and RSSI still decide who gets the parcel; this only
+  # rejects a phone that is plainly somewhere else.
+  ble_geofence_m: 12.0
+  ble_early_rtl_wait_s: 3.0
+  return_mode: RTL           # SMART_RTL retraces the outbound path; RTL is direct
+
+  # Drop-point person scan (2026-09-24). Off here; real.yaml turns it on.
+  # Descend to scan_altitude_m with the camera down, search (small orbit) for
+  # person_search_s, and only once a person is LOCKED open the BLE DROP for
+  # handshake_window_s. No lock or no handshake -> RTL. The BLE peripheral
+  # refuses DROP (NOT_READY, token kept) while mission.handshake_open is false.
+  person_scan_enabled: false
+  scan_altitude_m: 3.0
+  person_search_s: 25.0
+  handshake_window_s: 25.0
+  # An authenticated phone still streaming (RSSI/GPS) when the window runs out
+  # keeps it open this long past its last sample, never past scan_max_total_s.
+  handshake_phone_grace_s: 10.0
+  scan_orbit_radius_m: 2.0
+  scan_orbit_points: 8
+  scan_orbit_step_s: 3.0
+  # Someone in view mid-orbit: stop THERE and hold for the lock, rather than
+  # flying on and carrying them out of the frame (operator, 2026-09-24).
+  scan_pause_on_person: true
+  scan_pause_conf: 0.30       # plain detection score worth stopping for (HEF floor 0.20)
+  scan_pause_max_s: 0.0       # 0 = stay stopped while the person is in view (no more circling); >0 = give up after N s
+  scan_resume_s: 1.5          # person out of view this long -> resume the orbit
+  scan_found_grace_s: 3.0     # stopped on someone at the 25 s mark -> this much extra for the lock
+  # Phone locator: RSSI of the live BLE link + the phone's signed GPS, used to
+  # pick WHICH person to lock when there is more than one. See
+  # drone_stack/nodes/phone_locator.py for what it can and cannot do.
+  locator_enabled: true
+  # Posterior at which the camera is HINTED to prefer one person before it
+  # locks. A hint only - it never hands anything over; with 2+ people in view
+  # the ambiguity_* rules below decide. Also the floor of ambiguity_pick_prob.
+  locator_pick_prob: 0.8
+  # Robust radio model (2026-10-08). Student-t RSSI residuals so one
+  # body-blocked dwell cannot swing the result, and a GPS outlier mixture so a
+  # multipath-thrown phone fix cannot outvote the radio evidence.
+  locator_robust_nu: 4.0            # Student-t dof; lower = heavier tails
+  locator_gps_outlier_frac: 0.2     # prior share of phone fixes that are bad
+  locator_gps_outlier_sigma_m: 15.0 # spread of a bad fix
+  # 2+ people below: NEVER take the camera's pick. Identify the phone holder
+  # (RSSI + the phone's signed GPS, fused by PhoneLocator) or decline and
+  # return with the parcel. Acceptance takes ALL THREE:
+  #   posterior     >= ambiguity_pick_prob
+  #   leave-one-out >= ambiguity_loo_prob (pick survives losing any one RSSI
+  #                    bin, or the phone's GPS)
+  #   one more look from a fresh vantage still picks the same person
+  # scripts/sim_phone_pick.py (600 trials/row, seed 11, people 3 m apart,
+  # 2026-10-08) - wrong = parcel handed to the wrong person:
+  #                     hover    ring     adaptive (this config)
+  #   nominal 2 people  1.50%    1.00%    0.50%  (76.5% identified)
+  #   nominal 3 people  1.17%    2.33%    0.17%  (47.3%)
+  #   harsh   2 people  6.50%    5.83%    0.50%  (63.7%)
+  #   harsh   3 people  4.83%    7.00%    1.33%  (42.3%)
+  # The rest decline. The radio figures are literature values, not yet fit to
+  # this aircraft's logs/rssi. A model, not a flight.
+  ambiguity_pick_prob: 0.95  # posterior needed to name one of 2+ people
+  ambiguity_loo_prob: 0.9    # worst leave-one-out posterior still needed
+  ambiguity_confirm: true    # one confirming look before handing over
+  ambiguity_wait_s: 8.0      # no phone on the link: wait this long, then decline
+  ambiguity_probe: true      # phone linked: fly the RSSI probe once first
+  # adaptive: each next vantage is where the candidates' expected RSSI differ
+  # most (probe_planner), stopping once the pick passes. ring: fixed plan.
+  ambiguity_probe_mode: adaptive
+  ambiguity_probe_budget_s: 36.0  # flight time the probe may spend
+  ambiguity_probe_min_gain: 0.0001  # stop when no vantage is worth flying to
+  ambiguity_probe_ring_points: 6
+  ambiguity_probe_ring_m: 2.0
+  ambiguity_probe_beyond_m: 1.5   # past each person, away from the others
+  ambiguity_probe_dwell_s: 2.0    # ~8 RSSI samples per vantage at 4 Hz
+  ambiguity_probe_leg_s: 6.0      # give up reaching a point after this
+
+  # Precision drop (2026-09-26). Off here; real.yaml turns it on. After the BLE
+  # handshake's gates pass, drone_ble_peripheral.py asks the navigator for a
+  # drop instead of firing the servo itself: move to drop_offset_m from the
+  # locked recipient, descend on the downward TF02-Pro (rangefinder: below) to
+  # drop_target_agl_m, release, report the delivery complete, climb to
+  # drop_climb_alt_m and RTL. Hover obstacle avoidance (RPLIDAR C1) runs every
+  # tick and always wins. Anything unsafe before the release -> climb back to
+  # the hold with the parcel; drop_max_attempts used -> RTL with the parcel.
+  # Disabled / disarmed -> the peripheral's old direct release (the bench path).
+  precision_drop_enabled: false
+  drop_offset_m: 1.8          # from the recipient; keep > navigation.avoidance_stop_m
+  drop_offset_tol_m: 0.3      # already this close to the offset -> descend where we are
+  drop_min_person_m: 1.0      # never descend closer than this to the recipient
+  drop_target_agl_m: 0.65     # release height above the ground (TF02-Pro); was 1.0 until 2026-10-10
+  drop_agl_tol_m: 0.15
+  drop_abort_agl_m: 0.45      # TF02 below this before the release -> abort. Keep ~0.2 m under
+                              # the target: at 0.6 (the 1.0 m era value) hover bob would abort
+  drop_descent_step_m: 0.5    # descend in steps this size...
+  drop_command_interval_s: 0.5  # ...re-issued this often
+  drop_settle_s: 1.0          # hold at the release height this long first
+  drop_release_hold_s: 2.0    # servo held open this long, then relocked
+  drop_climb_alt_m: 5.0       # climb here after the release, then RTL
+  drop_climb_timeout_s: 15.0
+  drop_approach_timeout_s: 10.0
+  drop_timeout_s: 45.0        # approach+descend+settle must finish inside this
+  drop_rangefinder_stale_s: 0.5
+  # TF02-Pro continuity. A drop only STARTS once the TF02 has been fresh
+  # without a gap for drop_rf_ready_s (a refusal spends no attempt), and a
+  # dropout mid-descent HOLDS altitude instead of aborting at once - up to
+  # drop_rf_gap_max_s, then abort. 27 Sep: a flaky TF02 burned both attempts
+  # in 1.4 s because one fresh frame passed the gate and the next gap aborted.
+  drop_rf_ready_s: 1.0
+  drop_rf_gap_max_s: 1.5
+  drop_rf_max_gaps: 3         # more dropouts than this on one attempt -> abort
+  drop_under_jump_m: 0.7      # TF02 this much shorter than expected -> something underneath
+  drop_over_jump_m: 1.5       # TF02 this much longer than expected -> sensors disagree
+  drop_avoid_abort_s: 5.0     # avoidance moving us this long before the release -> abort
+  drop_max_attempts: 2
+  drop_person_fresh_s: 3.0    # person lock older than this -> position unknown
+  follow_me_max_m: 15.0       # BLE follow-me may move the hold at most this far
+
+  # Arrival -> LAND. The navigator decides the return is over and commands LAND
+  # itself rather than trusting RTL_ALT_FINAL, a flight-controller parameter it
+  # cannot read. land_radius_m is NOT home_radius_m below: that one is a
+  # reporting threshold sized for GPS scatter, this one decides where the
+  # aircraft physically puts itself down.
+  land_radius_m: 2.0         # horizontal distance from home that counts as home
+  land_arm_delay_s: 5.0      # ignore the radius test for this long after RTL
+  land_rtl_timeout_s: 120.0  # land where you are if the return never arrives
+  leg_length_m: 25.0         # home->target line is split into legs this long
+  max_legs: 24
+  upload_to_fc: true         # also write the plan into the Pixhawk mission slot
+
+  # Write-back --------------------------------------------------------------
+  write_back: true           # push phase/telemetry onto the order document
+  # How close to home the aircraft must end up for the delivery to count as
+  # RETURNED. This is half of the outcome the GCS reports: the parcel's story
+  # (delivered / not delivered / aborted) and the aircraft's (returned / did
+  # not return) are independent, and a delivery that succeeded while the
+  # aircraft put itself down in a field is not a clean flight. Generous enough
+  # to cover GPS scatter and a landing a few metres off the pad.
+  home_radius_m: 15.0
+  status_field: status
+  dispatch_status: DISPATCHED
+
+# Downward rangefinder: Benewake TF02-Pro on the Pi 5's UART0 (2026-09-26).
+# Height above ground for the precision drop ONLY - it is not an avoidance
+# sensor (that is the RPLIDAR C1, lidar: above). 4500 cm is the sensor's "no
+# target" code and is treated as invalid. Off here; real.yaml turns it on.
+rangefinder:
+  enabled: false
+  port: /dev/ttyAMA0          # dtparam=uart0=on; NOT /dev/serial0 (ttyAMA10)
+  baud: 115200
+  min_strength: 100           # below this the reading is noise
+  min_range_m: 0.1
+  max_range_m: 22.0
+  rate_hz: 20.0               # node poll rate (sensor streams 100 Hz)
+  stale_s: 0.5                # no valid frame this long -> WARN
+  reconnect_interval_s: 2.0
+  reopen_after_s: 3.0         # connected but silent this long -> reopen the port
+  mount_height_m: 0.15        # sim only: sensor height above the skids
+  sim_noise_m: 0.02
+
+cameras:
+  enabled: true
+
+  # JPEG quality for the MJPEG stream (1-100). 60 is the point where the
+  # camera's own sensor noise costs more bandwidth than the extra quality buys.
+  jpeg_quality: 60
+
+  # ------------------------------------------------------------------ picam --
+  picam:
+    width: 1280
+    height: 720
+    fps: 30
+    # ISP (hardware) denoise: off | minimal | fast | high_quality.
+    # Runs on the image pipeline, not on a CPU core the flight stack needs, so
+    # it is the cheapest noise reduction available and the first thing to use.
+    isp_denoise: fast
+    # Auto-exposure bias: normal | short | long. "short" trades gain for a
+    # shorter exposure. On a moving aircraft this cuts motion blur AND the
+    # rolling-shutter skew that makes the frame appear to tear horizontally,
+    # because the top and bottom rows are sampled closer together in time.
+    ae_mode: short
+    # Apply the CPU frame filter below to this camera. On by default: this is
+    # the camera whose CSI ribbon runs past the ESCs.
+    filter: true
+    # The camera is mounted upside down on the airframe, so the image is
+    # rotated 180 deg. Done by the ISP via libcamera Transform (free); falls
+    # back to a CPU rotate only if libcamera is too old to expose Transform.
+    rotate_180: true
+
+  # ----------------------------------------------------------------- filter --
+  # CPU image conditioning. Deliberately narrow: it fixes what the ISP cannot
+  # see, which is row-correlated interference from the ESCs coupling into the
+  # CSI ribbon in flight (horizontal lines drifting through the frame).
+  # See drone_stack/gcs/frame_filter.py for the full rationale.
+  filter:
+    enabled: true
+
+    # -- stage 1: destripe (~1 ms at 720p) --
+    destripe: true
+    # Rows compared against a median of this many neighbours. The window wants
+    # to sit at or above the interference period but BELOW the finest real
+    # horizontal texture worth keeping. Measured at 720p: 21 removes 81% of a
+    # continuous band (15 removes 34%) while keeping the horizon at 100% and
+    # real horizontal texture at 97%; 31 removes only 69% and destroys half of
+    # that texture. Note that banding slower than the window is indistinguishable
+    # from vertical shading and is deliberately left alone.
+    destripe_window: 21
+    # Shrinkage floor in DN. A row within this much of where its neighbours say
+    # it belongs is left bit-for-bit alone, so a clean frame passes through
+    # untouched and nothing is ever invented. Raise if fine horizontal detail
+    # looks softened; lower to catch fainter banding.
+    destripe_floor: 0.6
+    # Largest correction any single row may receive, in DN. A residual bigger
+    # than this is more likely a real edge the median could not follow exactly
+    # than interference - the rows either side of a hard horizon are where that
+    # happens. Measured on a banded scene with an 89 DN horizon: capping at 10
+    # keeps 90% of the horizon against 85% uncapped while removing slightly MORE
+    # of the band. Raise only if you genuinely have banding stronger than this.
+    destripe_ceiling: 10.0
+    destripe_gain: 1.0
+    # Sample every Nth column when measuring row brightness. 4 is 4x cheaper
+    # and statistically identical - a 720p row still contributes 320 samples.
+    column_step: 4
+
+    # -- stage 2: row repair --
+    # A row displaced this far (DN) is destroyed rather than merely offset, so
+    # it is redrawn from the nearest surviving rows instead of being corrected.
+    row_repair: true
+    row_repair_floor: 14.0
+
+    # -- stage 3: temporal denoise (~8 ms at 720p on a Mac; measured and
+    #    auto-disabled on hardware if it does not fit - see budget_ms) --
+    temporal: true
+    # Blend weight against the previous frame where nothing moved. Higher is
+    # cleaner but slower to respond; 0.95 is the hard ceiling.
+    temporal_alpha: 0.6
+    # Frame-to-frame change (DN) at or below which motion is indistinguishable
+    # from sensor noise - blend at full strength. Without this deadband the
+    # noise floor sits partway up the ramp and halves the filter for nothing.
+    temporal_deadband: 6.0
+    # Change (DN) at which the blend drops to zero, so genuine movement passes
+    # through untouched and never ghosts or smears.
+    temporal_motion: 20.0
+    # Motion gate evaluated on s x s blocks. Bigger is cheaper and less
+    # noise-sensitive, but localises motion less precisely.
+    temporal_gate_scale: 4
+
+    # Latency guard. If the smoothed per-frame filter cost stays above this,
+    # the temporal stage is dropped (and the reason logged) rather than letting
+    # the video fall behind. Destriping is never dropped: it is the stage the
+    # artefact actually needs and it costs almost nothing.
+    budget_ms: 22.0
+
+# ============================================================== recording ===
+# Flight video recorder. Records whenever the aircraft is ARMED and keeps
+# exactly one clip - see drone_stack/gcs/recorder.py for why it is shaped this
+# way. In flight it appends the camera's already-encoded JPEG frames straight
+# to disk (no second encode; the Pi 5 has no hardware video encoder), and the
+# H.264 conversion runs after disarm when the CPU is free.
+recording:
+  enabled: true
+  # Relative to the repo root. Gitignored - flight footage is not source.
+  dir: recordings
+  # A completed clip shorter than this is DISCARDED and the previously kept
+  # clip survives - but ONLY if the aircraft never got airborne. A clip that
+  # flew is always kept, however short (see airborne_alt_m). Without it, a
+  # three-second arm/disarm fumble on the bench destroys the flight you
+  # actually wanted to keep.
+  min_seconds: 15.0
+  # Height above home (m) at which a recording counts as "flew". Mode-agnostic.
+  # 1 m, not less: barometric relative altitude drifts ~0.5 m on a bench.
+  airborne_alt_m: 1.0
+  # End the clip when the flight ends while still ARMED - RC motor e-stop
+  # ("RC8: MotorEStop HIGH"), flight termination (gcs/flight_state.py).
+  # Disarm always ends it regardless.
+  stop_on_flight_end: true
+  # While recording, fdatasync the frame file every N s. The kernel's own
+  # writeback is 30 s on this Pi, which a battery pull used to wipe out.
+  flush_s: 2.0
+  # Stage 1 after disarm: a fast unstabilised clip, promoted as the replay as
+  # soon as it exists (measured 0.77x real time for a 20 s flight). Stage 2,
+  # the stabilised 1080p render below, then replaces it in place (~5.8x).
+  quick_clip: true
+  quick_width: 1152
+  quick_height: 648
+  quick_preset: veryfast
+  quick_crf: 23
+  quick_threads: 2
+  # libx264 settings for the post-flight encode.
+  preset: superfast
+  crf: 22
+  encode_threads: 2
+  # -- full-resolution record stream (cameras.picam.record_width/height) --
+  # JPEG quality of the in-flight frames (YUV planes, no colour conversion).
+  quality: 82
+  # Replay output size. 2304x1296 recorded -> 1920x1080 leaves an 8.3% margin
+  # for the post-flight stabiliser.
+  out_width: 1920
+  out_height: 1080
+  # Zero-phase Gaussian smoothing of the camera path, in frames (5 @ 30 fps is
+  # a ~1 Hz corner). Larger = steadier but more of the margin used.
+  smooth_sigma: 5.0
+  max_angle_deg: 2.5
+  # The renderer paces itself to this many cores of CPU (of 4), so a finished
+  # flight never pushes the Pi past its load ceiling - it just takes longer.
+  render_cpu_cores: 0.8
+  # Hard ceiling on how long the encode may run before it is killed.
+  max_seconds: 1800.0
